@@ -86,6 +86,11 @@ def _add_eval_replay_args(parser: argparse.ArgumentParser) -> None:
         help="Database URL to attach to every replayed case (e.g. sqlite:///fixtures/demo.db).",
     )
     parser.add_argument(
+        "--fixture-dialect",
+        default=None,
+        help="Override the dialect inferred from --fixture-db (sqlite/postgres/mysql/snowflake/bigquery/redshift).",
+    )
+    parser.add_argument(
         "--output",
         required=True,
         help="Where to write the replayed suite (.yaml/.yml/.json).",
@@ -262,6 +267,7 @@ def _eval_replay(args: argparse.Namespace) -> int:
     suite = replay_from_jsonl(
         args.audit_jsonl,
         fixture_db=args.fixture_db,
+        fixture_dialect=args.fixture_dialect,
         suite_name=args.name,
         only_successful=not args.include_failures,
         skip_masked=not args.include_masked,

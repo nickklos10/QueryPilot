@@ -342,6 +342,69 @@ def test_replay_preserves_only_first_appearance_of_duplicate_id(fixture_db_url: 
     assert suite.cases[0].original_question == "first"
 
 
+def test_replay_infers_sqlite_dialect_from_url(fixture_db_url: str) -> None:
+    sink = InMemoryAuditSink()
+    sink.write(_record())
+
+    suite = replay_from_sink(sink, fixture_db=fixture_db_url)
+
+    assert suite.fixture_dialect == "sqlite"
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        ("sqlite:///x.db", "sqlite"),
+        ("postgresql://u:p@host/db", "postgres"),
+        ("postgres://u:p@host/db", "postgres"),
+        ("postgresql+psycopg://u:p@host/db", "postgres"),
+        ("mysql://u:p@host/db", "mysql"),
+        ("mysql+pymysql://u:p@host/db", "mysql"),
+        ("snowflake://acct/db", "snowflake"),
+        ("bigquery://project/dataset", "bigquery"),
+        ("redshift+psycopg2://u:p@host/db", "redshift"),
+        ("unknownscheme://x", "sqlite"),  # falls back to sqlite default
+    ],
+)
+def test_dialect_from_url(url: str, expected: str) -> None:
+    from querypilot.evals.replay import dialect_from_url
+
+    assert dialect_from_url(url) == expected
+
+
+def test_replay_explicit_fixture_dialect_overrides_url(fixture_db_url: str) -> None:
+    sink = InMemoryAuditSink()
+    sink.write(_record())
+
+    suite = replay_from_sink(
+        sink, fixture_db=fixture_db_url, fixture_dialect="postgres"
+    )
+
+    assert suite.fixture_dialect == "postgres"
+
+
+def test_replay_postgres_url_yields_postgres_dialect() -> None:
+    sink = InMemoryAuditSink()
+    sink.write(_record())
+
+    suite = replay_from_sink(
+        sink, fixture_db="postgresql://user:pw@host/db"
+    )
+
+    assert suite.fixture_dialect == "postgres"
+
+
+def test_replay_from_sink_fetches_more_than_default_when_limit_high(fixture_db_url: str) -> None:
+    sink = InMemoryAuditSink()
+    # Generate 50 eligible records then write them oldest-first to the sink.
+    for i in range(50):
+        sink.write(_record(audit_id=f"rec-{i:03d}"))
+
+    suite = replay_from_sink(sink, fixture_db=fixture_db_url, limit=50)
+
+    assert len(suite.cases) == 50
+
+
 def test_replay_does_not_set_source_authored(fixture_db_url: str) -> None:
     sink = InMemoryAuditSink()
     sink.write(_record(audit_id="rec-1"))

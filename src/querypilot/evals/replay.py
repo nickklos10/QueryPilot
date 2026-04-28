@@ -9,14 +9,36 @@ from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite, ComparisonConf
 
 
 _DEFAULT_TAGS = ("replay", "regression")
-_DEFAULT_RECENT_LIMIT = 10_000
 _DEFAULT_REPLAY_OPERATION = "ask"
+_FETCH_OVERHEAD_FACTOR = 10  # eligible records may be a fraction of total; over-fetch to compensate
+
+_URL_DIALECT_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("sqlite:", "sqlite"),
+    ("postgresql+", "postgres"),
+    ("postgresql:", "postgres"),
+    ("postgres:", "postgres"),
+    ("mysql+", "mysql"),
+    ("mysql:", "mysql"),
+    ("snowflake:", "snowflake"),
+    ("bigquery:", "bigquery"),
+    ("redshift+", "redshift"),
+    ("redshift:", "redshift"),
+)
+
+
+def dialect_from_url(database_url: str) -> str:
+    lowered = database_url.lower()
+    for prefix, dialect in _URL_DIALECT_PREFIXES:
+        if lowered.startswith(prefix):
+            return dialect
+    return "sqlite"
 
 
 def replay_from_sink(
     sink: AuditSink,
     *,
     fixture_db: str,
+    fixture_dialect: str | None = None,
     suite_name: str = "audit_replay",
     only_successful: bool = True,
     skip_masked: bool = True,
@@ -27,10 +49,12 @@ def replay_from_sink(
     thresholds: SuiteThresholds | None = None,
     comparison: ComparisonConfig | None = None,
 ) -> BenchmarkSuite:
-    records = list(reversed(sink.recent(limit=_DEFAULT_RECENT_LIMIT)))
+    fetch_size = max(limit * _FETCH_OVERHEAD_FACTOR, limit)
+    records = list(reversed(sink.recent(limit=fetch_size)))
     return _build_suite(
         records=records,
         fixture_db=fixture_db,
+        fixture_dialect=fixture_dialect or dialect_from_url(fixture_db),
         suite_name=suite_name,
         only_successful=only_successful,
         skip_masked=skip_masked,
@@ -47,6 +71,7 @@ def replay_from_jsonl(
     path: str | Path,
     *,
     fixture_db: str,
+    fixture_dialect: str | None = None,
     suite_name: str = "audit_replay",
     only_successful: bool = True,
     skip_masked: bool = True,
@@ -64,6 +89,7 @@ def replay_from_jsonl(
     return _build_suite(
         records=records,
         fixture_db=fixture_db,
+        fixture_dialect=fixture_dialect or dialect_from_url(fixture_db),
         suite_name=suite_name,
         only_successful=only_successful,
         skip_masked=skip_masked,
@@ -91,6 +117,7 @@ def _build_suite(
     *,
     records: list[QueryAuditRecord],
     fixture_db: str,
+    fixture_dialect: str,
     suite_name: str,
     only_successful: bool,
     skip_masked: bool,
@@ -123,7 +150,7 @@ def _build_suite(
     return BenchmarkSuite(
         name=suite_name,
         fixture_db=fixture_db,
-        fixture_dialect="sqlite",
+        fixture_dialect=fixture_dialect,
         thresholds=thresholds or SuiteThresholds(),
         comparison=comparison or ComparisonConfig(),
         cases=cases,
