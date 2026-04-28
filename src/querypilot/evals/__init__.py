@@ -12,7 +12,8 @@ from querypilot.evals.factory import (
     build_qp_factory,
     load_suite_or_dir,
 )
-from querypilot.evals.loader import SuiteLoadError, load_suite, load_suite_dir
+from querypilot.evals.loader import SuiteLoadError, load_suite, load_suite_dir, write_suite
+from querypilot.evals.replay import replay_from_jsonl, replay_from_sink
 from querypilot.evals.pipeline import (
     CaseResult,
     FailureCategory,
@@ -55,7 +56,10 @@ __all__ = [
     "load_suite_dir",
     "load_suite_or_dir",
     "render_terminal",
+    "replay_from_jsonl",
+    "replay_from_sink",
     "run_case",
     "run_suite",
     "write_json",
+    "write_suite",
 ]
