@@ -46,6 +46,56 @@ print(answer.rows)
 print(answer.validation.risk_level)
 ```
 
+## LLM SQL Generation
+
+For production-style natural-language SQL generation, plug in an LLM generator. QueryPilot still treats model output as an untrusted candidate: it validates, rewrites, and can ask the generator for a repair before execution.
+
+Install optional provider dependencies:
+
+```bash
+.venv/bin/pip install -e ".[openai]"
+.venv/bin/pip install -e ".[anthropic]"
+```
+
+OpenAI:
+
+```python
+from querypilot import QueryPilot
+from querypilot.generation import OpenAISQLGenerator
+
+qp = QueryPilot.connect(
+    "sqlite:///demo.db",
+    generator=OpenAISQLGenerator(model="gpt-5.1"),
+    max_generation_attempts=2,
+)
+
+answer = qp.ask("Which customers generated the most revenue?")
+```
+
+Anthropic:
+
+```python
+from querypilot import QueryPilot
+from querypilot.generation import AnthropicSQLGenerator
+
+qp = QueryPilot.connect(
+    "sqlite:///demo.db",
+    generator=AnthropicSQLGenerator(model="claude-sonnet-4-20250514"),
+    max_generation_attempts=2,
+)
+```
+
+The safety loop is always:
+
+```text
+question
+  -> schema-scoped prompt
+  -> model candidate SQL
+  -> QueryPilot validation
+  -> optional repair
+  -> safe execution
+```
+
 ## Safety Engine
 
 QueryPilot validates SQL before execution with:

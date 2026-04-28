@@ -10,6 +10,7 @@ from querypilot.core.types import (
     TableSchema,
     ValidationResult,
 )
+from querypilot.generation import AnthropicSQLGenerator, OpenAISQLGenerator
 
 __all__ = [
     "ColumnSchema",
@@ -19,6 +20,8 @@ __all__ = [
     "QueryPilot",
     "QueryPilotAnswer",
     "QueryResult",
+    "AnthropicSQLGenerator",
+    "OpenAISQLGenerator",
     "SchemaMatch",
     "TableSchema",
     "ValidationResult",

@@ -15,6 +15,7 @@ class QueryPilotConfig(BaseModel):
     readonly: bool = True
     max_rows: int = Field(default=100, ge=1)
     timeout_seconds: int = Field(default=10, ge=1)
+    max_generation_attempts: int = Field(default=2, ge=1)
     allowed_tables: list[str] | None = None
     blocked_tables: list[str] | None = None
     safety_policy: SafetyPolicy = Field(default_factory=SafetyPolicy)

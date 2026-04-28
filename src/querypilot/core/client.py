@@ -45,6 +45,7 @@ class QueryPilot:
         readonly: bool = True,
         max_rows: int = 100,
         timeout_seconds: int = 10,
+        max_generation_attempts: int = 2,
         allowed_tables: list[str] | None = None,
         blocked_tables: list[str] | None = None,
         safety_policy: SafetyPolicy | None = None,
@@ -55,6 +56,7 @@ class QueryPilot:
             readonly=readonly,
             max_rows=max_rows,
             timeout_seconds=timeout_seconds,
+            max_generation_attempts=max_generation_attempts,
             allowed_tables=allowed_tables,
             blocked_tables=blocked_tables,
             safety_policy=safety_policy or SafetyPolicy(),
@@ -83,14 +85,32 @@ class QueryPilot:
 
     def ask(self, question: str) -> QueryPilotAnswer:
         generated = self.generate_sql(question)
-        if generated.sql is None:
-            details = "; ".join(generated.errors) or "no SQL was returned"
-            raise ValueError(f"Could not generate SQL: {details}")
+        validation: ValidationResult | None = None
 
-        validation = self.validate_sql(generated.sql)
-        if not validation.valid or validation.rewritten_sql is None:
-            details = "; ".join(validation.errors) or "unknown validation error"
-            raise ValueError(f"SQL validation failed: {details}")
+        for attempt in range(self.config.max_generation_attempts):
+            if generated.sql is None:
+                details = "; ".join(generated.errors) or "no SQL was returned"
+                raise ValueError(f"Could not generate SQL: {details}")
+
+            validation = self.validate_sql(generated.sql)
+            if validation.valid and validation.rewritten_sql is not None:
+                break
+
+            can_repair = hasattr(self.generator, "repair")
+            if not can_repair or attempt >= self.config.max_generation_attempts - 1:
+                details = "; ".join(validation.errors) or "unknown validation error"
+                raise ValueError(f"SQL validation failed: {details}")
+
+            generated = self.generator.repair(  # type: ignore[attr-defined]
+                question,
+                self.get_schema(),
+                self.config.max_rows,
+                generated.sql,
+                validation,
+            )
+
+        if validation is None or not validation.valid or validation.rewritten_sql is None:
+            raise ValueError("SQL validation failed: unknown validation error")
 
         result = execute(self.connector, validation.rewritten_sql)
         explanation = generated.explanation or explain_result(question, result.sql, result.rows)
