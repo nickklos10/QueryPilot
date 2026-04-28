@@ -1,4 +1,3 @@
-from querypilot.evals.cases import EvalCase, EvalReport, EvalResult
 from querypilot.evals.compare import RowsetMatch, ValueMismatch, compare_rows, has_order_by
 from querypilot.evals.cost import (
     AnthropicCostTracker,
@@ -6,6 +5,12 @@ from querypilot.evals.cost import (
     NullCostTracker,
     OpenAICostTracker,
     TokenUsage,
+)
+from querypilot.evals.factory import (
+    build_cost_tracker_factory,
+    build_generator,
+    build_qp_factory,
+    load_suite_or_dir,
 )
 from querypilot.evals.loader import SuiteLoadError, load_suite, load_suite_dir
 from querypilot.evals.pipeline import (
@@ -15,7 +20,6 @@ from querypilot.evals.pipeline import (
     run_case,
 )
 from querypilot.evals.report import render_terminal, write_json
-from querypilot.evals.runner import run_eval_cases
 from querypilot.evals.suite import (
     BenchmarkCase,
     BenchmarkSuite,
@@ -31,9 +35,6 @@ __all__ = [
     "CaseResult",
     "ComparisonConfig",
     "CostTracker",
-    "EvalCase",
-    "EvalReport",
-    "EvalResult",
     "FailureCategory",
     "NullCostTracker",
     "OpenAICostTracker",
@@ -45,13 +46,16 @@ __all__ = [
     "TagRollup",
     "TokenUsage",
     "ValueMismatch",
+    "build_cost_tracker_factory",
+    "build_generator",
+    "build_qp_factory",
     "compare_rows",
     "has_order_by",
     "load_suite",
     "load_suite_dir",
+    "load_suite_or_dir",
     "render_terminal",
     "run_case",
-    "run_eval_cases",
     "run_suite",
     "write_json",
 ]
