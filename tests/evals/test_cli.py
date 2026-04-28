@@ -206,6 +206,105 @@ def test_eval_run_uses_suite_fixture_db_when_database_url_omitted(
     assert exit_code == 0
 
 
+def test_eval_replay_materializes_suite_from_jsonl(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    from querypilot import QueryPilot
+    from querypilot.audit import AuditMetadata, JSONLAuditSink
+
+    audit_path = tmp_path / "audit.jsonl"
+    sink = JSONLAuditSink(audit_path)
+    qp = QueryPilot.connect(
+        database_url=f"sqlite:///{fixture_db_path}",
+        dialect="sqlite",
+        audit_sink=sink,
+        audit_metadata=AuditMetadata(app_name="cli-test"),
+    )
+    qp.ask("Top customers by revenue")
+    qp.ask("Count of customers")
+
+    output_path = tmp_path / "replay.yaml"
+    exit_code = cli_main(
+        [
+            "eval",
+            "replay",
+            "--audit-jsonl",
+            str(audit_path),
+            "--fixture-db",
+            f"sqlite:///{fixture_db_path}",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    assert output_path.exists()
+    captured = capsys.readouterr()
+    assert "2 cases" in captured.out
+
+    from querypilot.evals import load_suite
+
+    suite = load_suite(output_path)
+    assert len(suite.cases) == 2
+    assert all(c.source == "audit_replay" for c in suite.cases)
+    assert all("app:cli-test" in c.tags for c in suite.cases)
+
+
+def test_eval_replay_writes_json_when_extension_is_json(
+    tmp_path: Path, fixture_db_path: Path
+) -> None:
+    import json
+
+    from querypilot import QueryPilot
+    from querypilot.audit import JSONLAuditSink
+
+    audit_path = tmp_path / "audit.jsonl"
+    sink = JSONLAuditSink(audit_path)
+    qp = QueryPilot.connect(
+        database_url=f"sqlite:///{fixture_db_path}",
+        dialect="sqlite",
+        audit_sink=sink,
+    )
+    qp.ask("Top customers by revenue")
+
+    output_path = tmp_path / "replay.json"
+    exit_code = cli_main(
+        [
+            "eval",
+            "replay",
+            "--audit-jsonl",
+            str(audit_path),
+            "--fixture-db",
+            f"sqlite:///{fixture_db_path}",
+            "--output",
+            str(output_path),
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(output_path.read_text())
+    assert payload["name"] == "audit_replay"
+    assert len(payload["cases"]) == 1
+
+
+def test_eval_replay_missing_audit_file_exits(
+    tmp_path: Path, fixture_db_path: Path
+) -> None:
+    with pytest.raises(FileNotFoundError):
+        cli_main(
+            [
+                "eval",
+                "replay",
+                "--audit-jsonl",
+                str(tmp_path / "missing.jsonl"),
+                "--fixture-db",
+                f"sqlite:///{fixture_db_path}",
+                "--output",
+                str(tmp_path / "out.yaml"),
+            ]
+        )
+
+
 def test_eval_run_no_color_strips_ansi(
     tmp_path: Path, fixture_db_path: Path, capsys
 ) -> None:

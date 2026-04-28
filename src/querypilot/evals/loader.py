@@ -14,6 +14,29 @@ class SuiteLoadError(ValueError):
 _SQLITE_PREFIX = "sqlite:///"
 
 
+def write_suite(suite: BenchmarkSuite, path: str | Path) -> Path:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = suite.model_dump(mode="json", exclude_none=True)
+    text = _dump(payload, target.suffix.lower())
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
+def _dump(payload: dict[str, Any], suffix: str) -> str:
+    if suffix == ".json":
+        return json.dumps(payload, indent=2, sort_keys=False) + "\n"
+    if suffix in {".yaml", ".yml"}:
+        try:
+            import yaml
+        except ImportError as exc:
+            raise SuiteLoadError(
+                "PyYAML is required to write YAML suites. Install with `pip install querypilot[eval]`."
+            ) from exc
+        return yaml.safe_dump(payload, sort_keys=False)
+    raise SuiteLoadError(f"Unsupported suite file extension for write: {suffix}")
+
+
 def load_suite(path: str | Path) -> BenchmarkSuite:
     suite_path = Path(path).resolve()
     if not suite_path.is_file():

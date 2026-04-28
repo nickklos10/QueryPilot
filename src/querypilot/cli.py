@@ -35,6 +35,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_eval_run_args(eval_run_parser)
 
+    eval_replay_parser = eval_subparsers.add_parser(
+        "replay",
+        help="Materialize a regression suite from an audit log.",
+    )
+    _add_eval_replay_args(eval_replay_parser)
+
     args = parser.parse_args(argv)
 
     if args.command == "serve":
@@ -46,6 +52,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "eval":
         if args.eval_command == "run":
             return _eval_run(args)
+        if args.eval_command == "replay":
+            return _eval_replay(args)
         raise SystemExit(f"Unknown eval subcommand: {args.eval_command}")
     return 0
 
@@ -63,6 +71,61 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
         "--access-policy-json",
         default=os.getenv("QUERYPILOT_ACCESS_POLICY_JSON"),
         help="JSON object for AccessPolicy configuration.",
+    )
+
+
+def _add_eval_replay_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--audit-jsonl",
+        required=True,
+        help="Path to a JSONL audit log written by JSONLAuditSink.",
+    )
+    parser.add_argument(
+        "--fixture-db",
+        required=True,
+        help="Database URL to attach to every replayed case (e.g. sqlite:///fixtures/demo.db).",
+    )
+    parser.add_argument(
+        "--fixture-dialect",
+        default=None,
+        help="Override the dialect inferred from --fixture-db (sqlite/postgres/mysql/snowflake/bigquery/redshift).",
+    )
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Where to write the replayed suite (.yaml/.yml/.json).",
+    )
+    parser.add_argument(
+        "--name",
+        default="audit_replay",
+        help="Suite name to embed in the output file.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=1000,
+        help="Maximum number of cases to materialize.",
+    )
+    parser.add_argument(
+        "--include-masked",
+        action="store_true",
+        help="Include cases whose audit record applied a non-empty access policy.",
+    )
+    parser.add_argument(
+        "--include-failures",
+        action="store_true",
+        help="Include cases that failed validation, execution, or had errors.",
+    )
+    parser.add_argument(
+        "--include-empty",
+        action="store_true",
+        help="Include cases that returned zero rows.",
+    )
+    parser.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="Extra tag to attach to every replayed case (repeatable).",
     )
 
 
@@ -194,6 +257,27 @@ def _eval_run(args: argparse.Namespace) -> int:
         write_json(report, args.report)
 
     print(render_terminal(report, color=not args.no_color))
+    return 0
+
+
+def _eval_replay(args: argparse.Namespace) -> int:
+    from querypilot.evals.loader import write_suite
+    from querypilot.evals.replay import replay_from_jsonl
+
+    suite = replay_from_jsonl(
+        args.audit_jsonl,
+        fixture_db=args.fixture_db,
+        fixture_dialect=args.fixture_dialect,
+        suite_name=args.name,
+        only_successful=not args.include_failures,
+        skip_masked=not args.include_masked,
+        skip_empty_results=not args.include_empty,
+        limit=args.limit,
+        extra_tags=args.tag,
+    )
+
+    target = write_suite(suite, args.output)
+    print(f"Wrote {len(suite.cases)} cases to {target}")
     return 0
 
 
