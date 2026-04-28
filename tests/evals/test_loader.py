@@ -321,7 +321,7 @@ def test_load_suite_dir_merges_files(tmp_path: Path) -> None:
         safety,
         {
             "name": "safety",
-            "fixture_db": "sqlite:///x.db",
+            "fixture_db": "sqlite:///fixtures/demo.db",
             "cases": [
                 {
                     "id": "blocks_drop",
@@ -337,6 +337,66 @@ def test_load_suite_dir_merges_files(tmp_path: Path) -> None:
 
     case_ids = {c.id for c in merged.cases}
     assert case_ids == {"select_one", "blocks_drop"}
+
+
+def test_load_suite_dir_rejects_mismatched_fixture_db(tmp_path: Path) -> None:
+    a = tmp_path / "a.yaml"
+    b = tmp_path / "b.yaml"
+    _write_yaml(a, _minimal_suite_payload())
+    payload_b = _minimal_suite_payload()
+    payload_b["cases"][0]["id"] = "select_two"
+    payload_b["fixture_db"] = "sqlite:///different.db"
+    _write_yaml(b, payload_b)
+
+    with pytest.raises(SuiteLoadError, match=r"'fixture_db' differs"):
+        load_suite_dir(tmp_path)
+
+
+def test_load_suite_dir_rejects_mismatched_thresholds(tmp_path: Path) -> None:
+    a = tmp_path / "a.yaml"
+    b = tmp_path / "b.yaml"
+    payload_a = _minimal_suite_payload()
+    payload_a["thresholds"] = {"pass_rate": 0.95}
+    _write_yaml(a, payload_a)
+    payload_b = _minimal_suite_payload()
+    payload_b["cases"][0]["id"] = "select_two"
+    payload_b["thresholds"] = {"pass_rate": 0.80}
+    _write_yaml(b, payload_b)
+
+    with pytest.raises(SuiteLoadError, match=r"'thresholds' differs"):
+        load_suite_dir(tmp_path)
+
+
+def test_load_suite_dir_rejects_mismatched_comparison(tmp_path: Path) -> None:
+    a = tmp_path / "a.yaml"
+    b = tmp_path / "b.yaml"
+    _write_yaml(a, _minimal_suite_payload())
+    payload_b = _minimal_suite_payload()
+    payload_b["cases"][0]["id"] = "select_two"
+    payload_b["comparison"] = {"float_tolerance": 0.5}
+    _write_yaml(b, payload_b)
+
+    with pytest.raises(SuiteLoadError, match=r"'comparison' differs"):
+        load_suite_dir(tmp_path)
+
+
+def test_load_suite_dir_keeps_consistent_config_across_files(tmp_path: Path) -> None:
+    payload_a = _minimal_suite_payload()
+    payload_a["thresholds"] = {"pass_rate": 0.95, "safety_pass_rate": 1.0}
+    payload_a["comparison"] = {"float_tolerance": 0.001}
+    payload_b = _minimal_suite_payload()
+    payload_b["cases"][0]["id"] = "select_two"
+    payload_b["thresholds"] = {"pass_rate": 0.95, "safety_pass_rate": 1.0}
+    payload_b["comparison"] = {"float_tolerance": 0.001}
+    _write_yaml(tmp_path / "a.yaml", payload_a)
+    _write_yaml(tmp_path / "b.yaml", payload_b)
+
+    merged = load_suite_dir(tmp_path)
+
+    assert merged.thresholds.pass_rate == 0.95
+    assert merged.thresholds.safety_pass_rate == 1.0
+    assert merged.comparison.float_tolerance == 0.001
+    assert {c.id for c in merged.cases} == {"select_one", "select_two"}
 
 
 def test_load_suite_dir_rejects_duplicate_ids_across_files(tmp_path: Path) -> None:

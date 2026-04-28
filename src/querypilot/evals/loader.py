@@ -38,23 +38,19 @@ def load_suite_dir(path: str | Path) -> BenchmarkSuite:
     if not suite_files:
         raise SuiteLoadError(f"No .yaml/.yml/.json suite files found in: {suite_dir}")
 
-    merged_name: str | None = None
-    merged_fixture_db: str | None = None
-    merged_fixture_dialect = "sqlite"
-    merged_thresholds: dict[str, Any] = {}
-    merged_comparison: dict[str, Any] = {}
+    sub_suites = [load_suite(suite_file) for suite_file in suite_files]
+    head, *rest = sub_suites
+    head_path = suite_files[0]
+
+    for sub, sub_path in zip(rest, suite_files[1:]):
+        _require_dir_match(head, head_path, sub, sub_path, "fixture_db")
+        _require_dir_match(head, head_path, sub, sub_path, "fixture_dialect")
+        _require_dir_match(head, head_path, sub, sub_path, "thresholds")
+        _require_dir_match(head, head_path, sub, sub_path, "comparison")
+
     merged_cases: list[BenchmarkCase] = []
     seen_ids: set[str] = set()
-
-    for suite_file in suite_files:
-        sub = load_suite(suite_file)
-        if merged_name is None:
-            merged_name = sub.name
-            merged_fixture_db = sub.fixture_db
-            merged_fixture_dialect = sub.fixture_dialect
-            merged_thresholds = sub.thresholds.model_dump(exclude_none=True)
-            merged_comparison = sub.comparison.model_dump()
-
+    for sub in sub_suites:
         for case in sub.cases:
             if case.id in seen_ids:
                 raise SuiteLoadError(
@@ -64,13 +60,31 @@ def load_suite_dir(path: str | Path) -> BenchmarkSuite:
             merged_cases.append(case)
 
     return BenchmarkSuite(
-        name=merged_name or suite_dir.name,
-        fixture_db=merged_fixture_db,
-        fixture_dialect=merged_fixture_dialect,
-        thresholds=merged_thresholds,  # type: ignore[arg-type]
-        comparison=merged_comparison,  # type: ignore[arg-type]
+        name=head.name,
+        fixture_db=head.fixture_db,
+        fixture_dialect=head.fixture_dialect,
+        thresholds=head.thresholds,
+        comparison=head.comparison,
         cases=merged_cases,
     )
+
+
+def _require_dir_match(
+    head: BenchmarkSuite,
+    head_path: Path,
+    sub: BenchmarkSuite,
+    sub_path: Path,
+    field: str,
+) -> None:
+    head_value = getattr(head, field)
+    sub_value = getattr(sub, field)
+    if head_value != sub_value:
+        raise SuiteLoadError(
+            f"{field!r} differs across suite directory: "
+            f"{head_path.name} has {head_value!r} but {sub_path.name} has {sub_value!r}. "
+            "All suite files in a directory must share fixture_db, fixture_dialect, "
+            "thresholds, and comparison settings."
+        )
 
 
 def _parse_file(path: Path) -> Any:
