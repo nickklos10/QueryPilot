@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from querypilot.evals.compare import RowsetMatch, ValueMismatch, compare_rows, has_order_by
+from querypilot.evals.compare import NAN, RowsetMatch, ValueMismatch, compare_rows, has_order_by
 from querypilot.evals.suite import ComparisonConfig
 
 
@@ -223,6 +223,87 @@ def test_zero_tolerance_strict_float_compare() -> None:
     )
 
     assert result.matched is False
+
+
+def test_float_tolerance_at_decimal_boundary_ordered() -> None:
+    # Regression: round(1.0004, 3)=1.0 vs round(1.0006, 3)=1.001 used to false-mismatch
+    # under the old quantization-based tolerance even though abs(diff)=0.0002 < 0.001.
+    gold = [{"x": 1.0004}]
+    candidate = [{"x": 1.0006}]
+
+    result = compare_rows(
+        gold,
+        candidate,
+        "SELECT x FROM t ORDER BY x",
+        ComparisonConfig(float_tolerance=0.001),
+    )
+
+    assert result.matched is True
+
+
+def test_float_tolerance_at_decimal_boundary_unordered() -> None:
+    gold = [{"x": 1.0004}]
+    candidate = [{"x": 1.0006}]
+
+    result = compare_rows(
+        gold, candidate, "SELECT x FROM t", ComparisonConfig(float_tolerance=0.001)
+    )
+
+    assert result.matched is True
+
+
+def test_float_tolerance_unordered_with_duplicates() -> None:
+    gold = [{"x": 1.0001}, {"x": 2.0001}, {"x": 2.0001}]
+    candidate = [{"x": 2.0002}, {"x": 1.00005}, {"x": 2.00005}]
+
+    result = compare_rows(
+        gold, candidate, "SELECT x FROM t", ComparisonConfig(float_tolerance=0.001)
+    )
+
+    assert result.matched is True
+
+
+def test_nan_matches_nan() -> None:
+    gold = [{"x": float("nan")}]
+    candidate = [{"x": float("nan")}]
+
+    result = compare_rows(gold, candidate, "SELECT x FROM t ORDER BY x")
+
+    assert result.matched is True
+
+
+def test_nan_does_not_match_real_string() -> None:
+    gold = [{"x": float("nan")}]
+    candidate = [{"x": "__NaN__"}]
+
+    result = compare_rows(gold, candidate, "SELECT x FROM t ORDER BY x")
+
+    assert result.matched is False
+
+
+def test_nan_normalized_to_sentinel_in_normalized_rows() -> None:
+    gold = [{"x": float("nan")}]
+    candidate = [{"x": float("nan")}]
+
+    result = compare_rows(gold, candidate, "SELECT x FROM t")
+
+    assert result.normalized_gold_rows == [{"x": NAN}]
+    assert result.normalized_candidate_rows == [{"x": NAN}]
+
+
+def test_nan_does_not_match_non_nan_float() -> None:
+    gold = [{"x": float("nan")}]
+    candidate = [{"x": 0.0}]
+
+    result = compare_rows(
+        gold,
+        candidate,
+        "SELECT x FROM t ORDER BY x",
+        ComparisonConfig(float_tolerance=0.1),
+    )
+
+    assert result.matched is False
+    assert result.mismatched_values[0].gold is NAN
 
 
 def test_datetime_normalized_to_iso() -> None:
