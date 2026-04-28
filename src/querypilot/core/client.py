@@ -9,7 +9,7 @@ from querypilot.adapters.openai import openai_tools
 from querypilot.connectors.base import BaseConnector
 from querypilot.connectors.postgres import PostgresConnector
 from querypilot.connectors.sqlite import SQLiteConnector
-from querypilot.core.config import QueryPilotConfig
+from querypilot.core.config import QueryPilotConfig, SafetyPolicy
 from querypilot.core.types import (
     DatabaseSchema,
     GeneratedSQL,
@@ -47,6 +47,7 @@ class QueryPilot:
         timeout_seconds: int = 10,
         allowed_tables: list[str] | None = None,
         blocked_tables: list[str] | None = None,
+        safety_policy: SafetyPolicy | None = None,
         generator: SQLGenerator | None = None,
     ) -> "QueryPilot":
         config = QueryPilotConfig(
@@ -56,6 +57,7 @@ class QueryPilot:
             timeout_seconds=timeout_seconds,
             allowed_tables=allowed_tables,
             blocked_tables=blocked_tables,
+            safety_policy=safety_policy or SafetyPolicy(),
         )
         connector = _connector_for(database_url, dialect, timeout_seconds)
         return cls(connector=connector, config=config, generator=generator)

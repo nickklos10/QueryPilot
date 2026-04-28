@@ -45,6 +45,13 @@ class GeneratedSQL(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class PolicyCheck(BaseModel):
+    name: str
+    passed: bool
+    message: str
+    severity: str = "low"
+
+
 class ValidationResult(BaseModel):
     valid: bool
     readonly: bool
@@ -52,6 +59,10 @@ class ValidationResult(BaseModel):
     columns: list[str] = Field(default_factory=list)
     limit_applied: bool = False
     rewritten_sql: str | None = None
+    risk_level: str = "low"
+    blocked_reason: str | None = None
+    policy_checks: list[PolicyCheck] = Field(default_factory=list)
+    query_fingerprint: str | None = None
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
