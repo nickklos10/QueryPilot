@@ -182,6 +182,7 @@ Endpoints:
 - `POST /validate-sql`
 - `POST /execute-sql`
 - `POST /evals/run`
+- `GET /audit/recent`
 
 Example:
 
@@ -189,6 +190,28 @@ Example:
 curl -X POST http://127.0.0.1:8000/validate-sql \
   -H "content-type: application/json" \
   -d '{"sql": "SELECT * FROM customers"}'
+```
+
+Pass audit metadata from calling systems:
+
+```bash
+curl -X POST http://127.0.0.1:8000/execute-sql \
+  -H "content-type: application/json" \
+  -d '{
+    "sql": "SELECT customer_name FROM customers LIMIT 10",
+    "metadata": {
+      "actor": "agent-1",
+      "session_id": "session-1",
+      "app_name": "internal-dashboard",
+      "trace_id": "trace-123"
+    }
+  }'
+```
+
+Inspect recent audit events:
+
+```bash
+curl http://127.0.0.1:8000/audit/recent
 ```
 
 ## MCP Server
@@ -246,6 +269,58 @@ report = run_eval_cases(
 print(report.passed, report.failed)
 ```
 
+## Audit Trail
+
+QueryPilot records structured audit events for schema search, SQL generation, validation, execution, and full `ask()` flows.
+
+Each audit record can include:
+
+- `audit_id`
+- timestamp
+- operation
+- question
+- original SQL
+- rewritten SQL
+- validation metadata
+- execution status
+- row count
+- execution time
+- error
+- actor/session/application/trace metadata
+
+Use the default in-memory sink:
+
+```python
+from querypilot import QueryPilot
+from querypilot.audit import AuditMetadata
+
+qp = QueryPilot.connect(
+    "sqlite:///demo.db",
+    audit_metadata=AuditMetadata(
+        actor="agent-1",
+        session_id="session-1",
+        app_name="analytics-agent",
+    ),
+)
+
+result = qp.execute_sql("SELECT customer_name FROM customers")
+
+print(result.audit_id)
+print(qp.get_audit_records(limit=10))
+```
+
+Or persist JSONL audit events:
+
+```python
+from querypilot import QueryPilot
+from querypilot.audit import JSONLAuditSink
+
+qp = QueryPilot.connect(
+    "sqlite:///demo.db",
+    audit_sink=JSONLAuditSink("querypilot-audit.jsonl"),
+)
+```
+
 ## Current Scope
 
 Included now:
@@ -261,6 +336,7 @@ Included now:
 - safety eval harness
 - FastAPI server runtime
 - MCP tool server runtime
+- in-memory and JSONL audit logging
 
 Deferred:
 

@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from querypilot import QueryPilot
+from querypilot.audit import AuditMetadata
 from querypilot.core.config import SafetyPolicy
 from querypilot.evals.cases import EvalCase
 from querypilot.evals.runner import run_eval_cases
@@ -13,14 +14,17 @@ from querypilot.evals.runner import run_eval_cases
 
 class QuestionRequest(BaseModel):
     question: str
+    metadata: AuditMetadata | None = None
 
 
 class SQLRequest(BaseModel):
     sql: str
+    metadata: AuditMetadata | None = None
 
 
 class SchemaSearchRequest(BaseModel):
     query: str
+    metadata: AuditMetadata | None = None
 
 
 class EvalRunRequest(BaseModel):
@@ -69,33 +73,42 @@ def create_app(
 
     @app.post("/search-schema")
     def search_schema(request: SchemaSearchRequest) -> list[dict[str, Any]]:
-        return [match.model_dump() for match in qp.search_schema(request.query)]
+        scoped_qp = qp.with_audit_metadata(request.metadata)
+        return [match.model_dump() for match in scoped_qp.search_schema(request.query)]
 
     @app.post("/ask")
     def ask(request: QuestionRequest) -> dict[str, Any]:
+        scoped_qp = qp.with_audit_metadata(request.metadata)
         try:
-            return qp.ask(request.question).model_dump()
+            return scoped_qp.ask(request.question).model_dump()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/generate-sql")
     def generate_sql(request: QuestionRequest) -> dict[str, Any]:
-        return qp.generate_sql(request.question).model_dump()
+        scoped_qp = qp.with_audit_metadata(request.metadata)
+        return scoped_qp.generate_sql(request.question).model_dump()
 
     @app.post("/validate-sql")
     def validate_sql(request: SQLRequest) -> dict[str, Any]:
-        return qp.validate_sql(request.sql).model_dump()
+        scoped_qp = qp.with_audit_metadata(request.metadata)
+        return scoped_qp.validate_sql(request.sql).model_dump()
 
     @app.post("/execute-sql")
     def execute_sql(request: SQLRequest) -> dict[str, Any]:
+        scoped_qp = qp.with_audit_metadata(request.metadata)
         try:
-            return qp.execute_sql(request.sql).model_dump()
+            return scoped_qp.execute_sql(request.sql).model_dump()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/evals/run")
     def run_evals(request: EvalRunRequest) -> dict[str, Any]:
         return run_eval_cases(qp, request.cases).model_dump()
+
+    @app.get("/audit/recent")
+    def recent_audit(limit: int = 100) -> list[dict[str, Any]]:
+        return [record.model_dump() for record in qp.get_audit_records(limit)]
 
     return app
 
