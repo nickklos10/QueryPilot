@@ -305,6 +305,230 @@ def test_eval_replay_missing_audit_file_exits(
         )
 
 
+def test_eval_check_passes_when_pass_rate_meets_threshold(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    suite = _smoke_suite(tmp_path, fixture_db_path)
+    report_path = tmp_path / "report.json"
+    cli_main(
+        [
+            "eval",
+            "run",
+            "--suite",
+            str(suite),
+            "--database-url",
+            f"sqlite:///{fixture_db_path}",
+            "--generator",
+            "demo",
+            "--report",
+            str(report_path),
+            "--no-color",
+        ]
+    )
+    capsys.readouterr()  # discard run output
+
+    exit_code = cli_main(
+        [
+            "eval",
+            "check",
+            "--report",
+            str(report_path),
+            "--threshold",
+            "0.9",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "OK" in captured.out
+
+
+def test_eval_check_exits_nonzero_on_threshold_violation(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    suite = _smoke_suite(tmp_path, fixture_db_path)
+    report_path = tmp_path / "report.json"
+    cli_main(
+        [
+            "eval",
+            "run",
+            "--suite",
+            str(suite),
+            "--database-url",
+            f"sqlite:///{fixture_db_path}",
+            "--generator",
+            "demo",
+            "--report",
+            str(report_path),
+            "--no-color",
+        ]
+    )
+    capsys.readouterr()
+
+    exit_code = cli_main(
+        [
+            "eval",
+            "check",
+            "--report",
+            str(report_path),
+            "--max-p95-ms",
+            "0",  # current p95 will exceed this
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Regression detected" in captured.out
+    assert "p95_latency_ms" in captured.out
+
+
+def test_eval_check_writes_outcome_json(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    import json
+
+    suite = _smoke_suite(tmp_path, fixture_db_path)
+    report_path = tmp_path / "report.json"
+    cli_main(
+        [
+            "eval",
+            "run",
+            "--suite",
+            str(suite),
+            "--database-url",
+            f"sqlite:///{fixture_db_path}",
+            "--generator",
+            "demo",
+            "--report",
+            str(report_path),
+            "--no-color",
+        ]
+    )
+    capsys.readouterr()
+
+    outcome_path = tmp_path / "outcome.json"
+    cli_main(
+        [
+            "eval",
+            "check",
+            "--report",
+            str(report_path),
+            "--outcome-json",
+            str(outcome_path),
+        ]
+    )
+
+    payload = json.loads(outcome_path.read_text())
+    assert payload["ok"] is True
+
+
+def test_eval_check_with_baseline_detects_regression(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    import json
+
+    suite = _smoke_suite(tmp_path, fixture_db_path)
+    report_path = tmp_path / "report.json"
+    cli_main(
+        [
+            "eval",
+            "run",
+            "--suite",
+            str(suite),
+            "--database-url",
+            f"sqlite:///{fixture_db_path}",
+            "--generator",
+            "demo",
+            "--report",
+            str(report_path),
+            "--no-color",
+        ]
+    )
+    capsys.readouterr()
+
+    # Baseline was a perfect run; tamper the current report to simulate regression
+    payload = json.loads(report_path.read_text())
+    payload["pass_rate"] = 0.5
+    payload["passed"] = 0
+    payload["failed"] = payload["total_cases"]
+    if payload["case_results"]:
+        payload["case_results"][0]["passed"] = False
+        payload["case_results"][0]["failure_category"] = "result_mismatch"
+    broken_path = tmp_path / "broken.json"
+    broken_path.write_text(json.dumps(payload))
+
+    exit_code = cli_main(
+        [
+            "eval",
+            "check",
+            "--report",
+            str(broken_path),
+            "--baseline",
+            str(report_path),
+            "--threshold",
+            "0.9",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "Failed cases" in captured.out
+
+
+def test_eval_init_scaffolds_directories(tmp_path: Path, capsys) -> None:
+    exit_code = cli_main(["eval", "init", "--target", str(tmp_path)])
+
+    assert exit_code == 0
+    assert (tmp_path / "suites" / "smoke.yaml").exists()
+    assert (tmp_path / "suites" / "safety.yaml").exists()
+    assert (tmp_path / ".eval" / "README.md").exists()
+    captured = capsys.readouterr()
+    assert "Scaffolded 3 files" in captured.out
+
+
+def test_eval_init_skips_existing_files_without_force(
+    tmp_path: Path, capsys
+) -> None:
+    cli_main(["eval", "init", "--target", str(tmp_path)])
+    capsys.readouterr()
+
+    # Modify the smoke file then re-run without --force
+    smoke = tmp_path / "suites" / "smoke.yaml"
+    smoke.write_text("custom\n", encoding="utf-8")
+
+    exit_code = cli_main(["eval", "init", "--target", str(tmp_path)])
+
+    assert exit_code == 0
+    assert smoke.read_text() == "custom\n"
+
+
+def test_eval_init_force_overwrites(tmp_path: Path, capsys) -> None:
+    cli_main(["eval", "init", "--target", str(tmp_path)])
+    capsys.readouterr()
+    smoke = tmp_path / "suites" / "smoke.yaml"
+    smoke.write_text("custom\n", encoding="utf-8")
+
+    cli_main(["eval", "init", "--target", str(tmp_path), "--force"])
+
+    assert smoke.read_text() != "custom\n"
+    assert "fixture_db" in smoke.read_text()
+
+
+def test_eval_init_uses_placeholder_fixture_path(tmp_path: Path, capsys) -> None:
+    cli_main(["eval", "init", "--target", str(tmp_path)])
+    capsys.readouterr()
+
+    smoke = (tmp_path / "suites" / "smoke.yaml").read_text()
+    safety = (tmp_path / "suites" / "safety.yaml").read_text()
+
+    # Scaffolded fixture path is an obvious placeholder so users know they
+    # must edit it before running the suite.
+    assert "REPLACE_ME" in smoke
+    assert "REPLACE_ME" in safety
+    # Comment guiding the user is included.
+    assert "# Update fixture_db" in smoke
+
+
 def test_eval_run_no_color_strips_ansi(
     tmp_path: Path, fixture_db_path: Path, capsys
 ) -> None:

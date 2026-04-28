@@ -1,0 +1,340 @@
+{
+  "suite_name": "smoke",
+  "generator_name": "demo",
+  "model_name": null,
+  "database_url": "sqlite:///tests/fixtures/demo.db",
+  "querypilot_version": "0.1.0",
+  "started_at": "2026-04-28T03:58:33.362161Z",
+  "finished_at": "2026-04-28T03:58:33.386932Z",
+  "duration_ms": 24,
+  "total_cases": 3,
+  "passed": 3,
+  "failed": 0,
+  "pass_rate": 1.0,
+  "safety_pass_rate": 1.0,
+  "correctness_rate": 1.0,
+  "repair_rate": 0.0,
+  "first_pass_rate": 1.0,
+  "avg_repair_attempts": 0.0,
+  "avg_latency_ms": 7,
+  "p50_latency_ms": 2,
+  "p95_latency_ms": 17,
+  "avg_generate_ms": 0,
+  "avg_validate_ms": 1,
+  "avg_repair_ms_when_triggered": 0,
+  "avg_execute_ms": 0,
+  "total_prompt_tokens": 0,
+  "total_completion_tokens": 0,
+  "estimated_cost_usd": 0.0,
+  "tag_rollups": {
+    "revenue": {
+      "tag": "revenue",
+      "total": 1,
+      "passed": 1,
+      "pass_rate": 1.0
+    },
+    "ranking": {
+      "tag": "ranking",
+      "total": 1,
+      "passed": 1,
+      "pass_rate": 1.0
+    },
+    "aggregation": {
+      "tag": "aggregation",
+      "total": 1,
+      "passed": 1,
+      "pass_rate": 1.0
+    },
+    "listing": {
+      "tag": "listing",
+      "total": 1,
+      "passed": 1,
+      "pass_rate": 1.0
+    }
+  },
+  "failure_breakdown": {},
+  "thresholds": {
+    "pass_rate": 0.95,
+    "safety_pass_rate": 1.0,
+    "correctness_rate": 0.9,
+    "max_p95_latency_ms": 5000,
+    "max_avg_cost_usd": null
+  },
+  "threshold_violations": [],
+  "case_results": [
+    {
+      "id": "top_customers_by_revenue",
+      "passed": true,
+      "failure_category": null,
+      "question": "Top customers by revenue",
+      "candidate_sql": "SELECT customer_name, revenue FROM customers ORDER BY revenue DESC LIMIT 100",
+      "rewritten_sql": "SELECT customer_name, revenue FROM customers ORDER BY revenue DESC LIMIT 100",
+      "gold_sql": "SELECT customer_name, revenue\nFROM customers\nORDER BY revenue DESC\nLIMIT 100\n",
+      "correctness_passed": true,
+      "safety_passed": false,
+      "validation_passed": true,
+      "execution_passed": true,
+      "repair_attempts": 0,
+      "validation_errors": [],
+      "rowset_match": {
+        "matched": true,
+        "order_sensitive": true,
+        "column_mismatch": [],
+        "missing_rows": [],
+        "extra_rows": [],
+        "mismatched_values": [],
+        "normalized_gold_rows": [
+          {
+            "customer_name": "Acme Corp",
+            "revenue": 120000
+          },
+          {
+            "customer_name": "Globex",
+            "revenue": 95000
+          },
+          {
+            "customer_name": "Hooli",
+            "revenue": 50000
+          },
+          {
+            "customer_name": "Initech",
+            "revenue": 40000
+          },
+          {
+            "customer_name": "Soylent",
+            "revenue": 18000
+          }
+        ],
+        "normalized_candidate_rows": [
+          {
+            "customer_name": "Acme Corp",
+            "revenue": 120000
+          },
+          {
+            "customer_name": "Globex",
+            "revenue": 95000
+          },
+          {
+            "customer_name": "Hooli",
+            "revenue": 50000
+          },
+          {
+            "customer_name": "Initech",
+            "revenue": 40000
+          },
+          {
+            "customer_name": "Soylent",
+            "revenue": 18000
+          }
+        ]
+      },
+      "timings": {
+        "generate_ms": 2,
+        "validate_ms": 4,
+        "repair_ms": 0,
+        "execute_ms": 1,
+        "gold_execute_ms": 0,
+        "compare_ms": 0,
+        "total_ms": 19
+      },
+      "token_usage": null,
+      "estimated_cost_usd": null,
+      "tags": [
+        "revenue",
+        "ranking"
+      ],
+      "error": null,
+      "traceback": null
+    },
+    {
+      "id": "customer_count",
+      "passed": true,
+      "failure_category": null,
+      "question": "Count of customers",
+      "candidate_sql": "SELECT COUNT(*) AS count FROM customers LIMIT 100",
+      "rewritten_sql": "SELECT COUNT(*) AS count FROM customers LIMIT 100",
+      "gold_sql": "SELECT COUNT(*) AS count FROM customers",
+      "correctness_passed": true,
+      "safety_passed": false,
+      "validation_passed": true,
+      "execution_passed": true,
+      "repair_attempts": 0,
+      "validation_errors": [],
+      "rowset_match": {
+        "matched": true,
+        "order_sensitive": false,
+        "column_mismatch": [],
+        "missing_rows": [],
+        "extra_rows": [],
+        "mismatched_values": [],
+        "normalized_gold_rows": [
+          {
+            "count": 5
+          }
+        ],
+        "normalized_candidate_rows": [
+          {
+            "count": 5
+          }
+        ]
+      },
+      "timings": {
+        "generate_ms": 0,
+        "validate_ms": 0,
+        "repair_ms": 0,
+        "execute_ms": 0,
+        "gold_execute_ms": 0,
+        "compare_ms": 0,
+        "total_ms": 2
+      },
+      "token_usage": null,
+      "estimated_cost_usd": null,
+      "tags": [
+        "aggregation"
+      ],
+      "error": null,
+      "traceback": null
+    },
+    {
+      "id": "list_invoices",
+      "passed": true,
+      "failure_category": null,
+      "question": "Show invoices",
+      "candidate_sql": "SELECT * FROM invoices LIMIT 100",
+      "rewritten_sql": "SELECT * FROM invoices LIMIT 100",
+      "gold_sql": "SELECT * FROM invoices LIMIT 100",
+      "correctness_passed": true,
+      "safety_passed": false,
+      "validation_passed": true,
+      "execution_passed": true,
+      "repair_attempts": 0,
+      "validation_errors": [],
+      "rowset_match": {
+        "matched": true,
+        "order_sensitive": false,
+        "column_mismatch": [],
+        "missing_rows": [],
+        "extra_rows": [],
+        "mismatched_values": [],
+        "normalized_gold_rows": [
+          {
+            "id": 1,
+            "customer_id": 1,
+            "month": "2026-03",
+            "revenue": 10000,
+            "status": "paid"
+          },
+          {
+            "id": 2,
+            "customer_id": 1,
+            "month": "2026-04",
+            "revenue": 10000,
+            "status": "paid"
+          },
+          {
+            "id": 3,
+            "customer_id": 2,
+            "month": "2026-03",
+            "revenue": 8000,
+            "status": "paid"
+          },
+          {
+            "id": 4,
+            "customer_id": 2,
+            "month": "2026-04",
+            "revenue": 8000,
+            "status": "paid"
+          },
+          {
+            "id": 5,
+            "customer_id": 3,
+            "month": "2026-04",
+            "revenue": 3500,
+            "status": "open"
+          },
+          {
+            "id": 6,
+            "customer_id": 4,
+            "month": "2026-03",
+            "revenue": 5000,
+            "status": "paid"
+          },
+          {
+            "id": 7,
+            "customer_id": 5,
+            "month": "2026-04",
+            "revenue": 1500,
+            "status": "open"
+          }
+        ],
+        "normalized_candidate_rows": [
+          {
+            "id": 1,
+            "customer_id": 1,
+            "month": "2026-03",
+            "revenue": 10000,
+            "status": "paid"
+          },
+          {
+            "id": 2,
+            "customer_id": 1,
+            "month": "2026-04",
+            "revenue": 10000,
+            "status": "paid"
+          },
+          {
+            "id": 3,
+            "customer_id": 2,
+            "month": "2026-03",
+            "revenue": 8000,
+            "status": "paid"
+          },
+          {
+            "id": 4,
+            "customer_id": 2,
+            "month": "2026-04",
+            "revenue": 8000,
+            "status": "paid"
+          },
+          {
+            "id": 5,
+            "customer_id": 3,
+            "month": "2026-04",
+            "revenue": 3500,
+            "status": "open"
+          },
+          {
+            "id": 6,
+            "customer_id": 4,
+            "month": "2026-03",
+            "revenue": 5000,
+            "status": "paid"
+          },
+          {
+            "id": 7,
+            "customer_id": 5,
+            "month": "2026-04",
+            "revenue": 1500,
+            "status": "open"
+          }
+        ]
+      },
+      "timings": {
+        "generate_ms": 0,
+        "validate_ms": 0,
+        "repair_ms": 0,
+        "execute_ms": 0,
+        "gold_execute_ms": 0,
+        "compare_ms": 0,
+        "total_ms": 2
+      },
+      "token_usage": null,
+      "estimated_cost_usd": null,
+      "tags": [
+        "listing"
+      ],
+      "error": null,
+      "traceback": null
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 from querypilot.access import AccessPolicy
 from querypilot import QueryPilot
@@ -41,6 +42,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_eval_replay_args(eval_replay_parser)
 
+    eval_check_parser = eval_subparsers.add_parser(
+        "check",
+        help="Compare a SuiteReport JSON against thresholds and a baseline.",
+    )
+    _add_eval_check_args(eval_check_parser)
+
+    eval_init_parser = eval_subparsers.add_parser(
+        "init",
+        help="Scaffold suites/ and .eval/ in the current directory.",
+    )
+    eval_init_parser.add_argument(
+        "--target",
+        default=".",
+        help="Directory to scaffold into (default: current working directory).",
+    )
+    eval_init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing files.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "serve":
@@ -54,6 +76,10 @@ def main(argv: list[str] | None = None) -> int:
             return _eval_run(args)
         if args.eval_command == "replay":
             return _eval_replay(args)
+        if args.eval_command == "check":
+            return _eval_check(args)
+        if args.eval_command == "init":
+            return _eval_init(args)
         raise SystemExit(f"Unknown eval subcommand: {args.eval_command}")
     return 0
 
@@ -126,6 +152,48 @@ def _add_eval_replay_args(parser: argparse.ArgumentParser) -> None:
         action="append",
         default=[],
         help="Extra tag to attach to every replayed case (repeatable).",
+    )
+
+
+def _add_eval_check_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--report",
+        required=True,
+        help="Path to a SuiteReport JSON written by `querypilot eval run --report ...`.",
+    )
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help="Optional baseline SuiteReport JSON for regression comparison.",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="Minimum overall pass_rate (0..1).",
+    )
+    parser.add_argument(
+        "--max-p95-ms",
+        type=int,
+        default=None,
+        help="Maximum p95 case latency in milliseconds.",
+    )
+    parser.add_argument(
+        "--require-safety",
+        type=float,
+        default=None,
+        help="Minimum safety_pass_rate (0..1).",
+    )
+    parser.add_argument(
+        "--require-correctness",
+        type=float,
+        default=None,
+        help="Minimum correctness_rate (0..1).",
+    )
+    parser.add_argument(
+        "--outcome-json",
+        default=None,
+        help="Optional path to write the structured CheckOutcome JSON.",
     )
 
 
@@ -257,6 +325,44 @@ def _eval_run(args: argparse.Namespace) -> int:
         write_json(report, args.report)
 
     print(render_terminal(report, color=not args.no_color))
+    return 0
+
+
+def _eval_check(args: argparse.Namespace) -> int:
+    from querypilot.evals.check import (
+        check_report,
+        format_outcome,
+        load_report,
+        write_outcome,
+    )
+
+    report = load_report(args.report)
+    baseline = load_report(args.baseline) if args.baseline else None
+
+    outcome = check_report(
+        report,
+        baseline=baseline,
+        threshold=args.threshold,
+        max_p95_ms=args.max_p95_ms,
+        require_safety_pass_rate=args.require_safety,
+        require_correctness_rate=args.require_correctness,
+    )
+
+    if args.outcome_json:
+        write_outcome(outcome, args.outcome_json)
+
+    print(format_outcome(outcome))
+    return 0 if outcome.ok else 1
+
+
+def _eval_init(args: argparse.Namespace) -> int:
+    from querypilot.evals.init import scaffold
+
+    target = Path(args.target).resolve()
+    written = scaffold(target, force=args.force)
+    print(f"Scaffolded {len(written)} files in {target}")
+    for path in written:
+        print(f"  {path.relative_to(target)}")
     return 0
 
 
