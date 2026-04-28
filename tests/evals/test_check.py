@@ -283,6 +283,15 @@ def test_format_outcome_lists_regressed_cases() -> None:
     assert "result_mismatch" in text
 
 
+def test_format_outcome_renders_zero_latency_delta() -> None:
+    baseline = _stub_report(p95_latency_ms=100)
+    current = _stub_report(p95_latency_ms=100, pass_rate=0.5)
+
+    text = format_outcome(check_report(current, baseline=baseline, threshold=0.9))
+
+    assert "(+0 ms)" in text
+
+
 def test_format_outcome_includes_latency_section() -> None:
     baseline = _stub_report(p95_latency_ms=100)
     current = _stub_report(p95_latency_ms=300, pass_rate=0.5)

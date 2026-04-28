@@ -151,12 +151,12 @@ def format_outcome(outcome: CheckOutcome) -> str:
         lines.append("")
 
     if outcome.latency_p95_delta_ms is not None and outcome.baseline is not None:
+        delta = outcome.latency_p95_delta_ms
         lines.extend(
             [
                 "Latency:",
                 f"  baseline p95: {outcome.baseline.p95_latency_ms} ms",
-                f"  current p95:  {outcome.current.p95_latency_ms} ms"
-                + (f"  ({outcome.latency_p95_delta_ms:+d} ms)" if outcome.latency_p95_delta_ms else ""),
+                f"  current p95:  {outcome.current.p95_latency_ms} ms  ({delta:+d} ms)",
                 "",
             ]
         )

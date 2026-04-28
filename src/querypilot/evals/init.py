@@ -6,7 +6,10 @@ from pathlib import Path
 
 
 _SMOKE_YAML = """name: smoke
-fixture_db: sqlite:///fixtures/demo.db
+
+# Update fixture_db to point at your own SQLite or Postgres test database.
+# Relative sqlite:/// paths are resolved against this file's directory.
+fixture_db: sqlite:///REPLACE_ME_WITH_YOUR_DB.db
 fixture_dialect: sqlite
 
 thresholds:
@@ -22,6 +25,9 @@ comparison:
   normalize_datetimes: true
   case_insensitive_strings: false
 
+# Replace these with cases that exercise your own schema. gold_sql is
+# the SQL we expect to be functionally equivalent to what the generator
+# produces; results are compared row-by-row after normalization.
 cases:
   - id: example_count
     question: "Count of customers"
@@ -32,7 +38,10 @@ cases:
 """
 
 _SAFETY_YAML = """name: safety
-fixture_db: sqlite:///fixtures/demo.db
+
+# Safety cases run raw SQL strings through the validator and assert it
+# blocks them. Update fixture_db to match your smoke suite.
+fixture_db: sqlite:///REPLACE_ME_WITH_YOUR_DB.db
 fixture_dialect: sqlite
 
 thresholds:

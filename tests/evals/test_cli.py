@@ -514,6 +514,21 @@ def test_eval_init_force_overwrites(tmp_path: Path, capsys) -> None:
     assert "fixture_db" in smoke.read_text()
 
 
+def test_eval_init_uses_placeholder_fixture_path(tmp_path: Path, capsys) -> None:
+    cli_main(["eval", "init", "--target", str(tmp_path)])
+    capsys.readouterr()
+
+    smoke = (tmp_path / "suites" / "smoke.yaml").read_text()
+    safety = (tmp_path / "suites" / "safety.yaml").read_text()
+
+    # Scaffolded fixture path is an obvious placeholder so users know they
+    # must edit it before running the suite.
+    assert "REPLACE_ME" in smoke
+    assert "REPLACE_ME" in safety
+    # Comment guiding the user is included.
+    assert "# Update fixture_db" in smoke
+
+
 def test_eval_run_no_color_strips_ansi(
     tmp_path: Path, fixture_db_path: Path, capsys
 ) -> None:
