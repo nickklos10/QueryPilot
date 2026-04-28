@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from querypilot import QueryPilot
+from querypilot.core.config import SafetyPolicy
 
 
 def test_select_is_rewritten_with_limit(demo_db_url: str) -> None:
@@ -79,3 +80,72 @@ def test_existing_limit_is_preserved_or_capped(demo_db_url: str) -> None:
     assert small.limit_applied is False
     assert large.rewritten_sql == "SELECT * FROM customers LIMIT 10"
     assert large.limit_applied is True
+
+
+def test_validation_includes_policy_checks_risk_and_fingerprint(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite", max_rows=10)
+
+    result = qp.validate_sql("SELECT customer_name FROM customers")
+
+    assert result.risk_level == "low"
+    assert result.query_fingerprint
+    assert {check.name for check in result.policy_checks} >= {
+        "parseable",
+        "single_statement",
+        "readonly_select",
+        "known_tables",
+        "row_limit",
+    }
+    assert all(check.passed for check in result.policy_checks)
+
+
+def test_multi_statement_sql_is_rejected(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    result = qp.validate_sql("SELECT * FROM customers; SELECT * FROM invoices")
+
+    assert result.valid is False
+    assert result.risk_level == "critical"
+    assert result.blocked_reason == "Multiple SQL statements are not allowed."
+    assert any(check.name == "single_statement" and not check.passed for check in result.policy_checks)
+
+
+def test_malformed_sql_returns_structured_validation_failure(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    result = qp.validate_sql("SELECT FROM")
+
+    assert result.valid is False
+    assert result.risk_level == "critical"
+    assert result.blocked_reason is not None
+    assert result.blocked_reason.startswith("SQL parse error:")
+    assert any(check.name == "parseable" and not check.passed for check in result.policy_checks)
+
+
+def test_select_star_warns_by_default_and_can_be_rejected(demo_db_url: str) -> None:
+    permissive = QueryPilot.connect(demo_db_url, dialect="sqlite")
+    strict = QueryPilot.connect(
+        demo_db_url,
+        dialect="sqlite",
+        safety_policy=SafetyPolicy(allow_select_star=False),
+    )
+
+    permissive_result = permissive.validate_sql("SELECT * FROM customers")
+    strict_result = strict.validate_sql("SELECT * FROM customers")
+
+    assert permissive_result.valid is True
+    assert "SELECT * may expose more data than intended." in permissive_result.warnings
+    assert permissive_result.risk_level == "medium"
+    assert strict_result.valid is False
+    assert strict_result.blocked_reason == "SELECT * is disabled by policy."
+
+
+def test_cartesian_join_is_rejected(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    result = qp.validate_sql("SELECT customers.id, invoices.id FROM customers, invoices")
+
+    assert result.valid is False
+    assert result.risk_level == "high"
+    assert result.blocked_reason == "Potential Cartesian join detected."
+    assert any(check.name == "join_safety" and not check.passed for check in result.policy_checks)
