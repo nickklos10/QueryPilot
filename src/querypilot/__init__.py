@@ -1,3 +1,4 @@
+from querypilot.access import AccessPolicy, MaskingRule
 from querypilot.core.client import QueryPilot
 from querypilot.core.types import (
     ColumnSchema,
@@ -22,9 +23,11 @@ __all__ = [
     "QueryPilotAnswer",
     "QueryResult",
     "AnthropicSQLGenerator",
+    "AccessPolicy",
     "AuditMetadata",
     "InMemoryAuditSink",
     "JSONLAuditSink",
+    "MaskingRule",
     "OpenAISQLGenerator",
     "QueryAuditRecord",
     "SchemaMatch",

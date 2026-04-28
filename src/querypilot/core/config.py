@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from querypilot.access import AccessPolicy
+
 
 class SafetyPolicy(BaseModel):
     allow_select_star: bool = True
@@ -19,3 +21,4 @@ class QueryPilotConfig(BaseModel):
     allowed_tables: list[str] | None = None
     blocked_tables: list[str] | None = None
     safety_policy: SafetyPolicy = Field(default_factory=SafetyPolicy)
+    access_policy: AccessPolicy = Field(default_factory=AccessPolicy)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
+from querypilot.access import AccessPolicy
 from querypilot import QueryPilot
 
 
@@ -39,6 +41,11 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=int(os.getenv("QUERYPILOT_TIMEOUT_SECONDS", "10")),
     )
+    parser.add_argument(
+        "--access-policy-json",
+        default=os.getenv("QUERYPILOT_ACCESS_POLICY_JSON"),
+        help="JSON object for AccessPolicy configuration.",
+    )
 
 
 def _serve(args: argparse.Namespace) -> None:
@@ -56,6 +63,7 @@ def _serve(args: argparse.Namespace) -> None:
         dialect=args.dialect,
         max_rows=args.max_rows,
         timeout_seconds=args.timeout_seconds,
+        access_policy=_access_policy_from_args(args),
     )
     uvicorn.run(app, host=args.host, port=args.port)
 
@@ -71,9 +79,20 @@ def _mcp(args: argparse.Namespace) -> None:
         dialect=args.dialect,
         max_rows=args.max_rows,
         timeout_seconds=args.timeout_seconds,
+        access_policy=_access_policy_from_args(args),
     )
     server = create_mcp_server(qp)
     server.run(transport=args.transport)
+
+
+def _access_policy_from_args(args: argparse.Namespace) -> AccessPolicy | None:
+    if not args.access_policy_json:
+        return None
+    try:
+        payload = json.loads(args.access_policy_json)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid --access-policy-json: {exc}") from exc
+    return AccessPolicy.model_validate(payload)
 
 
 if __name__ == "__main__":

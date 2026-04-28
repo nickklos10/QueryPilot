@@ -133,6 +133,7 @@ class SQLValidator:
                 if column.name != "*"
             }
         )
+        access_policy_summary = self.config.access_policy.summary()
 
         for table_name in tables:
             if schema.get_table(table_name) is None:
@@ -183,6 +184,29 @@ class SQLValidator:
             )
         )
 
+        access_errors = _access_policy_errors(expression, tables, columns, self.config.access_policy)
+        if access_errors:
+            blocked_reason = blocked_reason or access_errors[0]
+            errors.extend(access_errors)
+            checks.append(
+                PolicyCheck(
+                    name="access_policy",
+                    passed=False,
+                    message="Access policy blocked one or more referenced columns.",
+                    severity="high",
+                )
+            )
+            risk_level = _max_risk(risk_level, "high")
+            access_policy_summary["blocked_columns"] = _blocked_column_summary(access_errors)
+        else:
+            checks.append(
+                PolicyCheck(
+                    name="access_policy",
+                    passed=True,
+                    message="Column access policy satisfied.",
+                )
+            )
+
         has_select_star = any(isinstance(selected, exp.Star) for selected in expression.find_all(exp.Star))
         if has_select_star and self.config.safety_policy.warn_on_select_star:
             warnings.append("SELECT * may expose more data than intended.")
@@ -232,6 +256,22 @@ class SQLValidator:
                 )
             )
 
+        expression, row_filter_errors = _apply_row_filters(
+            expression,
+            tables,
+            self.config.access_policy.row_filters,
+            self.config.dialect,
+        )
+        if row_filter_errors:
+            blocked_reason = blocked_reason or row_filter_errors[0]
+            errors.extend(row_filter_errors)
+            risk_level = _max_risk(risk_level, "high")
+        access_policy_summary["row_filters"] = {
+            table: filter_sql
+            for table, filter_sql in self.config.access_policy.row_filters.items()
+            if table in tables
+        }
+
         rewritten_sql, limit_applied = _apply_limit(expression, self.config.max_rows, self.config.dialect)
         checks.append(
             PolicyCheck(
@@ -256,6 +296,7 @@ class SQLValidator:
             blocked_reason=blocked_reason,
             policy_checks=checks,
             query_fingerprint=_fingerprint(rewritten_sql if not errors else stripped),
+            access_policy=access_policy_summary,
             warnings=warnings,
             errors=errors,
         )
@@ -325,3 +366,82 @@ def _highest_error_risk(checks: list[PolicyCheck]) -> str:
         if not check.passed:
             risk = _max_risk(risk, check.severity)
     return risk
+
+
+def _access_policy_errors(
+    expression: exp.Expression,
+    tables: list[str],
+    columns: list[str],
+    access_policy,
+) -> list[str]:
+    errors: list[str] = []
+    blocked = _normalized_policy_map(access_policy.blocked_columns)
+    allowed = _normalized_policy_map(access_policy.allowed_columns)
+    column_refs = _column_table_pairs(expression, tables, columns)
+
+    for table_name, column_name in column_refs:
+        blocked_columns = blocked.get(table_name, set())
+        if column_name in blocked_columns:
+            errors.append(f"Column is blocked by access policy: {table_name}.{column_name}")
+            continue
+
+        allowed_columns = allowed.get(table_name)
+        if allowed_columns is not None and column_name not in allowed_columns:
+            errors.append(f"Column is not allowed by access policy: {table_name}.{column_name}")
+
+    return errors
+
+
+def _column_table_pairs(
+    expression: exp.Expression,
+    tables: list[str],
+    columns: list[str],
+) -> list[tuple[str, str]]:
+    if not columns:
+        return []
+    pairs: list[tuple[str, str]] = []
+    default_table = tables[0] if len(tables) == 1 else None
+    for column in expression.find_all(exp.Column):
+        if column.name == "*":
+            continue
+        table_name = _normalize_identifier(column.table) if column.table else default_table
+        if table_name is None:
+            continue
+        pairs.append((table_name, _normalize_identifier(column.name)))
+    return pairs
+
+
+def _normalized_policy_map(policy: dict[str, list[str]]) -> dict[str, set[str]]:
+    return {
+        table.lower(): {column.lower() for column in columns}
+        for table, columns in policy.items()
+    }
+
+
+def _blocked_column_summary(errors: list[str]) -> list[str]:
+    blocked: list[str] = []
+    for error in errors:
+        if ": " in error:
+            blocked.append(error.split(": ", 1)[1])
+    return sorted(blocked)
+
+
+def _apply_row_filters(
+    expression: exp.Expression,
+    tables: list[str],
+    row_filters: dict[str, str],
+    dialect: str,
+) -> tuple[exp.Expression, list[str]]:
+    filtered_expression = expression
+    errors: list[str] = []
+    for table_name in tables:
+        filter_sql = row_filters.get(table_name)
+        if not filter_sql:
+            continue
+        try:
+            condition = sqlglot.parse_one(filter_sql, into=exp.Condition, read=dialect)
+        except sqlglot.errors.SqlglotError as exc:
+            errors.append(f"Invalid row filter for {table_name}: {exc}")
+            continue
+        filtered_expression = filtered_expression.where(condition, append=True, copy=True)
+    return filtered_expression, errors

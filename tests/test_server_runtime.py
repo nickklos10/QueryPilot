@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from querypilot.access import AccessPolicy
 from querypilot.server.app import create_app
 
 
@@ -105,3 +106,20 @@ def test_server_propagates_audit_metadata_and_lists_recent_records(demo_db_url: 
     assert recent.json()[0]["audit_id"] == response.json()["audit_id"]
     assert recent.json()[0]["actor"] == "agent-1"
     assert recent.json()[0]["trace_id"] == "trace-1"
+
+
+def test_server_enforces_access_policy(demo_db_url: str) -> None:
+    app = create_app(
+        database_url=demo_db_url,
+        dialect="sqlite",
+        access_policy=AccessPolicy(blocked_columns={"customers": ["revenue"]}),
+    )
+    client = TestClient(app)
+
+    response = client.post("/validate-sql", json={"sql": "SELECT revenue FROM customers"})
+
+    assert response.status_code == 200
+    assert response.json()["valid"] is False
+    assert response.json()["blocked_reason"] == (
+        "Column is blocked by access policy: customers.revenue"
+    )

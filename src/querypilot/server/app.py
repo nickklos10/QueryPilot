@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from querypilot import QueryPilot
+from querypilot.access import AccessPolicy
 from querypilot.audit import AuditMetadata
 from querypilot.core.config import SafetyPolicy
 from querypilot.evals.cases import EvalCase
@@ -43,6 +44,7 @@ def create_app(
     allowed_tables: list[str] | None = None,
     blocked_tables: list[str] | None = None,
     safety_policy: SafetyPolicy | None = None,
+    access_policy: AccessPolicy | None = None,
 ) -> FastAPI:
     qp = querypilot or _connect_querypilot(
         database_url=database_url,
@@ -54,6 +56,7 @@ def create_app(
         allowed_tables=allowed_tables,
         blocked_tables=blocked_tables,
         safety_policy=safety_policy,
+        access_policy=access_policy,
     )
 
     app = FastAPI(
@@ -124,6 +127,7 @@ def _connect_querypilot(
     allowed_tables: list[str] | None,
     blocked_tables: list[str] | None,
     safety_policy: SafetyPolicy | None,
+    access_policy: AccessPolicy | None,
 ) -> QueryPilot:
     if database_url is None:
         raise ValueError("database_url is required when querypilot is not provided.")
@@ -137,4 +141,5 @@ def _connect_querypilot(
         allowed_tables=allowed_tables,
         blocked_tables=blocked_tables,
         safety_policy=safety_policy,
+        access_policy=access_policy,
     )
