@@ -9,8 +9,8 @@ from querypilot import QueryPilot
 from querypilot.access import AccessPolicy
 from querypilot.audit import AuditMetadata
 from querypilot.core.config import SafetyPolicy
-from querypilot.evals.cases import EvalCase
-from querypilot.evals.runner import run_eval_cases
+from querypilot.evals.pipeline import run_case
+from querypilot.evals.suite import BenchmarkCase, ComparisonConfig
 
 
 class QuestionRequest(BaseModel):
@@ -29,7 +29,8 @@ class SchemaSearchRequest(BaseModel):
 
 
 class EvalRunRequest(BaseModel):
-    cases: list[EvalCase] = Field(default_factory=list)
+    cases: list[BenchmarkCase] = Field(default_factory=list)
+    comparison: ComparisonConfig | None = None
 
 
 def create_app(
@@ -107,7 +108,18 @@ def create_app(
 
     @app.post("/evals/run")
     def run_evals(request: EvalRunRequest) -> dict[str, Any]:
-        return run_eval_cases(qp, request.cases).model_dump()
+        comparison = request.comparison or ComparisonConfig()
+        results = [
+            run_case(case, lambda _: qp, comparison=comparison).model_dump(mode="json")
+            for case in request.cases
+        ]
+        passed = sum(1 for r in results if r["passed"])
+        return {
+            "total": len(results),
+            "passed": passed,
+            "failed": len(results) - passed,
+            "case_results": results,
+        }
 
     @app.get("/audit/recent")
     def recent_audit(limit: int = 100) -> list[dict[str, Any]]:

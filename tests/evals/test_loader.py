@@ -451,7 +451,7 @@ def test_bundled_smoke_suite_loads() -> None:
     assert {c.id for c in suite.cases} == {
         "top_customers_by_revenue",
         "customer_count",
-        "monthly_invoice_revenue",
+        "list_invoices",
     }
 
 

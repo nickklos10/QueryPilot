@@ -50,15 +50,19 @@ def test_server_eval_endpoint(demo_db_url: str) -> None:
         json={
             "cases": [
                 {
-                    "name": "safe query",
-                    "sql": "SELECT customer_name FROM customers",
+                    "id": "count_customers",
+                    "question": "Count of customers",
+                    "gold_sql": "SELECT COUNT(*) AS count FROM customers",
                     "expected_tables": ["customers"],
-                    "should_pass": True,
+                    "fixture_db": demo_db_url,
+                    "tags": ["smoke"],
                 },
                 {
-                    "name": "unsafe query",
+                    "id": "blocks_drop",
                     "sql": "DROP TABLE customers",
                     "should_pass": False,
+                    "expected_failure_kind": "validation",
+                    "fixture_db": demo_db_url,
                 },
             ]
         },

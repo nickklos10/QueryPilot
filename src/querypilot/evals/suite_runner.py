@@ -15,7 +15,12 @@ from querypilot.evals.pipeline import (
     QueryPilotFactory,
     run_case,
 )
-from querypilot.evals.suite import BenchmarkSuite, ComparisonConfig, SuiteThresholds
+from querypilot.evals.suite import (
+    BenchmarkCase,
+    BenchmarkSuite,
+    ComparisonConfig,
+    SuiteThresholds,
+)
 
 
 class TagRollup(BaseModel):
@@ -82,6 +87,8 @@ def run_suite(
     started_at = datetime.now(UTC)
     started = _now_seconds()
 
+    materialized = [_materialize_case(suite, case) for case in suite.cases]
+
     if max_workers <= 1:
         results = [
             run_case(
@@ -90,7 +97,7 @@ def run_suite(
                 cost_tracker=cost_tracker_factory(),
                 comparison=suite.comparison,
             )
-            for case in suite.cases
+            for case in materialized
         ]
     else:
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -102,7 +109,7 @@ def run_suite(
                         cost_tracker=cost_tracker_factory(),
                         comparison=suite.comparison,
                     ),
-                    suite.cases,
+                    materialized,
                 )
             )
 
@@ -223,6 +230,17 @@ def _build_report(
         thresholds=suite.thresholds,
         threshold_violations=threshold_violations,
         case_results=results,
+    )
+
+
+def _materialize_case(suite: BenchmarkSuite, case: BenchmarkCase) -> BenchmarkCase:
+    if case.fixture_db is not None and case.fixture_dialect is not None:
+        return case
+    return case.model_copy(
+        update={
+            "fixture_db": suite.resolved_fixture_db(case) or case.fixture_db,
+            "fixture_dialect": suite.resolved_fixture_dialect(case),
+        }
     )
 
 

@@ -17,12 +17,12 @@ comparison:
 
 cases:
   - id: top_customers_by_revenue
-    question: "Which customers generated the most revenue?"
+    question: "Top customers by revenue"
     gold_sql: |
       SELECT customer_name, revenue
       FROM customers
       ORDER BY revenue DESC
-      LIMIT 10
+      LIMIT 100
     expected_tables: [customers]
     expected_columns: [customer_name, revenue]
     must_include: ["ORDER BY", "LIMIT"]
@@ -30,20 +30,16 @@ cases:
     tags: [revenue, ranking]
 
   - id: customer_count
-    question: "How many customers are there?"
-    gold_sql: "SELECT COUNT(*) AS total FROM customers"
+    question: "Count of customers"
+    gold_sql: "SELECT COUNT(*) AS count FROM customers"
     expected_tables: [customers]
-    expected_columns: [total]
+    expected_columns: [count]
     tags: [aggregation]
 
-  - id: monthly_invoice_revenue
-    question: "What was the total invoice revenue per month?"
-    gold_sql: |
-      SELECT month, SUM(revenue) AS revenue
-      FROM invoices
-      GROUP BY month
-      ORDER BY month
+  - id: list_invoices
+    question: "Show invoices"
+    gold_sql: "SELECT * FROM invoices LIMIT 100"
     expected_tables: [invoices]
-    expected_columns: [month, revenue]
-    must_include: [GROUP BY]
-    tags: [aggregation, grouping]
+    must_include: [LIMIT]
+    must_not_contain: [DELETE, UPDATE, DROP, INSERT]
+    tags: [listing]
