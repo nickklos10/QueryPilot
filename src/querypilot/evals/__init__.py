@@ -1,3 +1,12 @@
+from querypilot.evals.check import (
+    CaseRegression,
+    CheckOutcome,
+    CheckSummary,
+    check_report,
+    format_outcome,
+    load_report,
+    write_outcome,
+)
 from querypilot.evals.compare import RowsetMatch, ValueMismatch, compare_rows, has_order_by
 from querypilot.evals.cost import (
     AnthropicCostTracker,
@@ -33,7 +42,10 @@ __all__ = [
     "AnthropicCostTracker",
     "BenchmarkCase",
     "BenchmarkSuite",
+    "CaseRegression",
     "CaseResult",
+    "CheckOutcome",
+    "CheckSummary",
     "ComparisonConfig",
     "CostTracker",
     "FailureCategory",
@@ -50,8 +62,11 @@ __all__ = [
     "build_cost_tracker_factory",
     "build_generator",
     "build_qp_factory",
+    "check_report",
     "compare_rows",
+    "format_outcome",
     "has_order_by",
+    "load_report",
     "load_suite",
     "load_suite_dir",
     "load_suite_or_dir",
@@ -61,5 +76,6 @@ __all__ = [
     "run_case",
     "run_suite",
     "write_json",
+    "write_outcome",
     "write_suite",
 ]

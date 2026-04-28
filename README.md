@@ -15,9 +15,16 @@ Every change to QueryPilot, your prompts, or your model can be measured against 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev,eval]"
+.venv/bin/querypilot eval init           # scaffold suites/ and .eval/
 .venv/bin/querypilot eval run \
     --suite suites/smoke.yaml \
-    --generator demo
+    --generator demo \
+    --report eval-out.json
+.venv/bin/querypilot eval check \
+    --report eval-out.json \
+    --baseline .eval/baseline.json \
+    --threshold 0.9 \
+    --require-safety 1.0
 ```
 
 Sample output:
@@ -65,7 +72,55 @@ Latency & cost
 ✅ No threshold violations.
 ```
 
-The bundled `suites/smoke.yaml` runs against a tiny SQLite fixture (`tests/fixtures/demo.db`) so the harness works end-to-end without an LLM key. To benchmark a real generator, use `--generator openai` or `--generator anthropic` and add `--report out.json` for the full machine-readable report.
+The bundled `suites/smoke.yaml` runs against a tiny SQLite fixture (`tests/fixtures/demo.db`) so the harness works end-to-end without an LLM key. To benchmark a real generator, use `--generator openai` or `--generator anthropic`.
+
+## Audit-Log Replay
+
+`querypilot eval replay` turns a JSONL audit log written by `JSONLAuditSink` into a `BenchmarkSuite` whose gold SQL is the SQL that previously executed. Re-running that suite gates accuracy regressions against your own production traffic — the unique-to-QueryPilot capability the eval positioning rests on.
+
+```bash
+querypilot eval replay \
+    --audit-jsonl audit.jsonl \
+    --fixture-db sqlite:///tests/fixtures/demo.db \
+    --output suites/replay.yaml
+querypilot eval run --suite suites/replay.yaml --generator demo --report replay-out.json
+```
+
+Conservative defaults: only successful `ask` records, non-empty results, no active access policy. `--include-failures`, `--include-masked`, `--include-empty` relax each filter.
+
+## CI Gate
+
+`querypilot eval check` compares a `SuiteReport` JSON against thresholds and a committed baseline, exiting non-zero on regression. A sample GitHub Actions workflow ships at `.github/workflows/eval.yml`:
+
+```yaml
+- run: querypilot eval run --suite suites/smoke.yaml --generator demo --report eval-out.json
+- run: querypilot eval check --report eval-out.json --baseline .eval/baseline.json --threshold 0.9 --require-safety 1.0
+```
+
+When a regression is detected the output explains which cases regressed and how:
+
+```text
+Regression detected.
+
+Pass rate:
+  baseline: 96%
+  current:  89%
+
+Failed cases (regression vs. baseline):
+  - monthly_revenue_by_segment (was passing -> now result_mismatch)
+  - top_customers_by_arr      (was passing -> now repair_failed)
+
+Latency:
+  baseline p95: 2100 ms
+  current p95:  3800 ms  (+1700 ms)
+```
+
+Refresh the baseline on `main` after a deliberate change:
+
+```bash
+querypilot eval run --suite suites/smoke.yaml --generator demo --report .eval/baseline.json
+git commit -am "Refresh eval baseline"
+```
 
 ## Authoring a Suite
 
@@ -467,12 +522,16 @@ Shipped:
 - FastAPI server runtime
 - MCP tool server runtime
 - **eval-driven harness**: YAML/JSON suites, execution-truth correctness scoring, safety/repair/latency/cost metrics, per-tag rollups, failure-category breakdown, threshold violations, JSON and screenshot-quality terminal reports
+- **audit-log → regression suite** (`querypilot eval replay`)
+- **CI regression gate** (`querypilot eval check` against a committed baseline) + sample GitHub Actions workflow
+- **`querypilot eval init`** — scaffolds `suites/` and `.eval/` for new projects
 
-Coming next (in plan order):
+## Roadmap
 
-- audit-log → regression suite (`querypilot eval replay`)
-- CI regression gate (`querypilot eval check` against a committed baseline)
-- richer benchmark fixtures and a starter `querypilot eval init`
-- schema-aware grounded generation
-- EXPLAIN-plan and cost guards
-- multi-database connectors (Snowflake, BigQuery, Redshift)
+The eval-driven foundation is shipped. Next pillars:
+
+- **Schema-aware grounded generation** — schema embeddings, retrieval, semantic verification of repaired SQL
+- **EXPLAIN-plan and cost guards** — per-query row/cost budgets, cardinality-based LIMIT policies, plan analysis
+- **Multi-tenant governance** — tenant-scoped row filters, per-actor policy injection, automatic PII detection
+- **Cross-dialect transpilation** — write a suite once, run it against SQLite, Postgres, MySQL
+- **Multi-database connectors** — Snowflake, BigQuery, Redshift

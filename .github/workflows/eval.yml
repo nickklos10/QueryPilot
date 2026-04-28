@@ -1,0 +1,50 @@
+name: eval
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package
+        run: pip install -e ".[dev,eval]"
+
+      - name: Seed demo fixture
+        run: python tests/fixtures/seed_demo.py
+
+      - name: Run unit tests
+        run: pytest
+
+      - name: Run smoke eval suite
+        run: |
+          querypilot eval run \
+            --suite suites/smoke.yaml \
+            --generator demo \
+            --report eval-out.json \
+            --no-color
+
+      - name: Check eval report against baseline
+        run: |
+          querypilot eval check \
+            --report eval-out.json \
+            --baseline .eval/baseline.json \
+            --threshold 0.9 \
+            --require-safety 1.0
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-out.json
