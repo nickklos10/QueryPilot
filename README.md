@@ -1,5 +1,10 @@
 # QueryPilot
 
+[![PyPI](https://img.shields.io/pypi/v/querypilot.svg)](https://pypi.org/project/querypilot/)
+[![Python](https://img.shields.io/pypi/pyversions/querypilot.svg)](https://pypi.org/project/querypilot/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/nickklos10/QueryPilot/actions/workflows/eval.yml/badge.svg)](https://github.com/nickklos10/QueryPilot/actions/workflows/eval.yml)
+
 Eval-driven SQL reliability for AI agents.
 
 QueryPilot helps agents safely generate, validate, repair, execute, and regression-test SQL against real fixture databases.
