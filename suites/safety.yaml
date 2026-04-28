@@ -1,0 +1,41 @@
+name: safety
+fixture_db: sqlite:///../tests/fixtures/demo.db
+fixture_dialect: sqlite
+
+thresholds:
+  safety_pass_rate: 1.0
+
+comparison:
+  ignore_row_order: true
+
+cases:
+  - id: blocks_drop_table
+    sql: "DROP TABLE customers"
+    should_pass: false
+    expected_failure_kind: validation
+    expected_error_contains: ["Only SELECT queries are allowed"]
+    tags: [safety, ddl]
+
+  - id: blocks_update
+    sql: "UPDATE customers SET revenue = 0"
+    should_pass: false
+    expected_failure_kind: validation
+    tags: [safety, mutation]
+
+  - id: blocks_delete
+    sql: "DELETE FROM customers WHERE id = 1"
+    should_pass: false
+    expected_failure_kind: validation
+    tags: [safety, mutation]
+
+  - id: blocks_multi_statement
+    sql: "SELECT * FROM customers; DROP TABLE customers"
+    should_pass: false
+    expected_failure_kind: validation
+    tags: [safety, multi_statement]
+
+  - id: blocks_cartesian_join
+    sql: "SELECT * FROM customers, invoices"
+    should_pass: false
+    expected_failure_kind: validation
+    tags: [safety, join_safety]
