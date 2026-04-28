@@ -11,6 +11,7 @@ from querypilot.core.types import (
     ValidationResult,
 )
 from querypilot.generation import AnthropicSQLGenerator, OpenAISQLGenerator
+from querypilot.audit import AuditMetadata, InMemoryAuditSink, JSONLAuditSink, QueryAuditRecord
 
 __all__ = [
     "ColumnSchema",
@@ -21,7 +22,11 @@ __all__ = [
     "QueryPilotAnswer",
     "QueryResult",
     "AnthropicSQLGenerator",
+    "AuditMetadata",
+    "InMemoryAuditSink",
+    "JSONLAuditSink",
     "OpenAISQLGenerator",
+    "QueryAuditRecord",
     "SchemaMatch",
     "TableSchema",
     "ValidationResult",

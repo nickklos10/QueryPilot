@@ -53,6 +53,7 @@ class PolicyCheck(BaseModel):
 
 
 class ValidationResult(BaseModel):
+    audit_id: str | None = None
     valid: bool
     readonly: bool
     tables: list[str] = Field(default_factory=list)
@@ -68,6 +69,7 @@ class ValidationResult(BaseModel):
 
 
 class QueryResult(BaseModel):
+    audit_id: str | None = None
     sql: str
     rows: list[dict] = Field(default_factory=list)
     row_count: int
@@ -75,6 +77,7 @@ class QueryResult(BaseModel):
 
 
 class QueryPilotAnswer(BaseModel):
+    audit_id: str | None = None
     question: str
     sql: str
     rows: list[dict] = Field(default_factory=list)

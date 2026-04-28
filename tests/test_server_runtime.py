@@ -79,3 +79,29 @@ def test_create_app_accepts_existing_querypilot(demo_db_url: str) -> None:
 
     assert response.status_code == 200
     assert response.json()[0]["table"] == "customers"
+
+
+def test_server_propagates_audit_metadata_and_lists_recent_records(demo_db_url: str) -> None:
+    app = create_app(database_url=demo_db_url, dialect="sqlite")
+    client = TestClient(app)
+
+    response = client.post(
+        "/execute-sql",
+        json={
+            "sql": "SELECT customer_name FROM customers LIMIT 1",
+            "metadata": {
+                "actor": "agent-1",
+                "session_id": "session-1",
+                "app_name": "dashboard",
+                "trace_id": "trace-1",
+            },
+        },
+    )
+    recent = client.get("/audit/recent")
+
+    assert response.status_code == 200
+    assert response.json()["audit_id"] is not None
+    assert recent.status_code == 200
+    assert recent.json()[0]["audit_id"] == response.json()["audit_id"]
+    assert recent.json()[0]["actor"] == "agent-1"
+    assert recent.json()[0]["trace_id"] == "trace-1"

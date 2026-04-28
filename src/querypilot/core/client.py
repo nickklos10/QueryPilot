@@ -6,6 +6,7 @@ from pydantic import TypeAdapter
 
 from querypilot.adapters.anthropic import anthropic_tools
 from querypilot.adapters.openai import openai_tools
+from querypilot.audit import AuditMetadata, AuditSink, InMemoryAuditSink, QueryAuditRecord
 from querypilot.connectors.base import BaseConnector
 from querypilot.connectors.postgres import PostgresConnector
 from querypilot.connectors.sqlite import SQLiteConnector
@@ -31,11 +32,15 @@ class QueryPilot:
         connector: BaseConnector,
         config: QueryPilotConfig,
         generator: SQLGenerator | None = None,
+        audit_sink: AuditSink | None = None,
+        audit_metadata: AuditMetadata | None = None,
     ) -> None:
         self.connector = connector
         self.config = config
         self.generator = generator or DemoSQLGenerator()
         self.validator = SQLValidator(config)
+        self.audit_sink = audit_sink or InMemoryAuditSink()
+        self.audit_metadata = audit_metadata or AuditMetadata()
 
     @classmethod
     def connect(
@@ -50,6 +55,8 @@ class QueryPilot:
         blocked_tables: list[str] | None = None,
         safety_policy: SafetyPolicy | None = None,
         generator: SQLGenerator | None = None,
+        audit_sink: AuditSink | None = None,
+        audit_metadata: AuditMetadata | None = None,
     ) -> "QueryPilot":
         config = QueryPilotConfig(
             dialect=dialect,
@@ -62,26 +69,79 @@ class QueryPilot:
             safety_policy=safety_policy or SafetyPolicy(),
         )
         connector = _connector_for(database_url, dialect, timeout_seconds)
-        return cls(connector=connector, config=config, generator=generator)
+        return cls(
+            connector=connector,
+            config=config,
+            generator=generator,
+            audit_sink=audit_sink,
+            audit_metadata=audit_metadata,
+        )
 
     def get_schema(self) -> DatabaseSchema:
         return self.connector.get_schema()
 
     def search_schema(self, query: str) -> list[SchemaMatch]:
-        return search_schema_impl(self.get_schema(), query)
+        matches = search_schema_impl(self.get_schema(), query)
+        self._write_audit_record(
+            operation="schema_search",
+            question=query,
+            row_count=len(matches),
+            executed=True,
+        )
+        return matches
 
     def generate_sql(self, question: str) -> GeneratedSQL:
-        return self.generator.generate(question, self.get_schema(), self.config.max_rows)
+        generated = self.generator.generate(question, self.get_schema(), self.config.max_rows)
+        self._write_audit_record(
+            operation="generate_sql",
+            question=question,
+            sql=generated.sql,
+            error="; ".join(generated.errors) if generated.errors else None,
+            executed=generated.sql is not None,
+        )
+        return generated
 
     def validate_sql(self, sql: str) -> ValidationResult:
-        return self.validator.validate(sql, self.get_schema())
+        validation = self.validator.validate(sql, self.get_schema())
+        record = self._write_audit_record(
+            operation="validate_sql",
+            sql=sql,
+            rewritten_sql=validation.rewritten_sql,
+            validation=validation,
+            valid=validation.valid,
+            error="; ".join(validation.errors) if validation.errors else None,
+        )
+        validation.audit_id = record.audit_id
+        return validation
 
     def execute_sql(self, sql: str) -> QueryResult:
-        validation = self.validate_sql(sql)
+        validation = self.validator.validate(sql, self.get_schema())
         if not validation.valid or validation.rewritten_sql is None:
             details = "; ".join(validation.errors) or "unknown validation error"
+            self._write_audit_record(
+                operation="execute_sql",
+                sql=sql,
+                rewritten_sql=validation.rewritten_sql,
+                validation=validation,
+                valid=validation.valid,
+                executed=False,
+                error=details,
+            )
             raise ValueError(f"SQL validation failed: {details}")
-        return execute(self.connector, validation.rewritten_sql)
+        result = execute(self.connector, validation.rewritten_sql)
+        record = self._write_audit_record(
+            operation="execute_sql",
+            sql=sql,
+            rewritten_sql=result.sql,
+            validation=validation,
+            valid=True,
+            executed=True,
+            row_count=result.row_count,
+            execution_time_ms=result.execution_time_ms,
+        )
+        validation.audit_id = record.audit_id
+        result.audit_id = record.audit_id
+        return result
 
     def ask(self, question: str) -> QueryPilotAnswer:
         generated = self.generate_sql(question)
@@ -114,7 +174,19 @@ class QueryPilot:
 
         result = execute(self.connector, validation.rewritten_sql)
         explanation = generated.explanation or explain_result(question, result.sql, result.rows)
+        record = self._write_audit_record(
+            operation="ask",
+            question=question,
+            sql=generated.sql,
+            rewritten_sql=result.sql,
+            validation=validation,
+            valid=True,
+            executed=True,
+            row_count=result.row_count,
+            execution_time_ms=result.execution_time_ms,
+        )
         return QueryPilotAnswer(
+            audit_id=record.audit_id,
             question=question,
             sql=result.sql,
             rows=result.rows,
@@ -140,6 +212,27 @@ class QueryPilot:
         if tool_name == "execute_sql":
             return self.execute_sql(str(tool_input["sql"])).model_dump()
         raise ValueError(f"Unknown Anthropic tool: {tool_name}")
+
+    def get_audit_records(self, limit: int = 100) -> list[QueryAuditRecord]:
+        return self.audit_sink.recent(limit)
+
+    def with_audit_metadata(self, metadata: AuditMetadata | None) -> "QueryPilot":
+        return QueryPilot(
+            connector=self.connector,
+            config=self.config,
+            generator=self.generator,
+            audit_sink=self.audit_sink,
+            audit_metadata=metadata or AuditMetadata(),
+        )
+
+    def _write_audit_record(self, operation: str, **kwargs) -> QueryAuditRecord:
+        record = QueryAuditRecord.create(
+            operation=operation,
+            metadata=self.audit_metadata,
+            **kwargs,
+        )
+        self.audit_sink.write(record)
+        return record
 
 
 def _connector_for(database_url: str, dialect: str, timeout_seconds: int) -> BaseConnector:
