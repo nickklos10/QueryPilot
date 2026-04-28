@@ -14,6 +14,7 @@ from querypilot.evals.pipeline import (
     StageTimings,
     run_case,
 )
+from querypilot.evals.report import render_terminal, write_json
 from querypilot.evals.runner import run_eval_cases
 from querypilot.evals.suite import (
     BenchmarkCase,
@@ -21,6 +22,7 @@ from querypilot.evals.suite import (
     ComparisonConfig,
     SuiteThresholds,
 )
+from querypilot.evals.suite_runner import SuiteReport, TagRollup, run_suite
 
 __all__ = [
     "AnthropicCostTracker",
@@ -38,13 +40,18 @@ __all__ = [
     "RowsetMatch",
     "StageTimings",
     "SuiteLoadError",
+    "SuiteReport",
     "SuiteThresholds",
+    "TagRollup",
     "TokenUsage",
     "ValueMismatch",
     "compare_rows",
     "has_order_by",
     "load_suite",
     "load_suite_dir",
+    "render_terminal",
     "run_case",
     "run_eval_cases",
+    "run_suite",
+    "write_json",
 ]
