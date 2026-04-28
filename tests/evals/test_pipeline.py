@@ -198,6 +198,10 @@ def test_repair_loop_invoked_when_generator_supports_it(fixture_db_url: str) -> 
     assert result.repair_attempts == 1
     assert gen.repaired == 1
     assert result.timings.repair_ms >= 0
+    # candidate_sql must reflect the *repaired* SQL, not the original DROP TABLE
+    assert result.candidate_sql is not None
+    assert "drop" not in result.candidate_sql.lower()
+    assert "count" in result.candidate_sql.lower()
 
 
 def test_execution_failed_when_candidate_sql_runtime_errors(fixture_db_url: str) -> None:
@@ -244,9 +248,13 @@ def test_token_usage_reported_when_cost_tracker_provided(fixture_db_url: str) ->
     class _RecordingTracker:
         def __init__(self) -> None:
             self.reset_called = False
+            self.restore_called = False
 
         def wrap(self, generator):
             return generator
+
+        def restore(self):
+            self.restore_called = True
 
         def last_usage(self):
             from querypilot.evals.cost import TokenUsage
@@ -267,6 +275,7 @@ def test_token_usage_reported_when_cost_tracker_provided(fixture_db_url: str) ->
     result = run_case(case, _factory(fixture_db_url), cost_tracker=tracker)
 
     assert tracker.reset_called is True
+    assert tracker.restore_called is True
     assert result.token_usage is not None
     assert result.token_usage.prompt_tokens == 12
     assert result.estimated_cost_usd == 0.0001

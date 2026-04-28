@@ -110,6 +110,8 @@ def run_case(
             ),
             overall_start,
         )
+    finally:
+        cost_tracker.restore()
 
 
 def _finalize(result: CaseResult, overall_start: float) -> CaseResult:
@@ -368,7 +370,7 @@ def _run_question_case(
         id=case.id,
         passed=True,
         question=question,
-        candidate_sql=generated.sql,
+        candidate_sql=final_sql,
         rewritten_sql=validation.rewritten_sql,
         gold_sql=case.gold_sql,
         correctness_passed=case.gold_sql is not None,

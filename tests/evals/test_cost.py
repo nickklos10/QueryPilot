@@ -259,3 +259,56 @@ def test_openai_tracker_returns_generator_when_client_missing() -> None:
 
     assert result is bare
     assert tracker.last_usage() is None
+
+
+def test_openai_tracker_restore_returns_original_responses() -> None:
+    response = _FakeResponse(usage=_FakeUsage(input_tokens=10, output_tokens=5))
+    generator = _FakeOpenAIGenerator(model="gpt-4o-mini", response=response)
+    original_responses = generator.client.responses
+    tracker = OpenAICostTracker()
+
+    tracker.wrap(generator)
+    assert generator.client.responses is not original_responses
+
+    tracker.restore()
+    assert generator.client.responses is original_responses
+
+
+def test_openai_tracker_restore_is_idempotent() -> None:
+    response = _FakeResponse(usage=_FakeUsage(input_tokens=10, output_tokens=5))
+    generator = _FakeOpenAIGenerator(model="gpt-4o-mini", response=response)
+    tracker = OpenAICostTracker()
+    tracker.wrap(generator)
+
+    tracker.restore()
+    tracker.restore()  # second call is a no-op
+
+
+def test_openai_tracker_wrap_is_idempotent() -> None:
+    response = _FakeResponse(usage=_FakeUsage(input_tokens=10, output_tokens=5))
+    generator = _FakeOpenAIGenerator(model="gpt-4o-mini", response=response)
+    tracker = OpenAICostTracker()
+    tracker.wrap(generator)
+    proxy_after_first_wrap = generator.client.responses
+
+    tracker.wrap(generator)
+
+    # Second wrap should NOT nest a proxy on top of the existing proxy.
+    assert generator.client.responses is proxy_after_first_wrap
+
+
+def test_anthropic_tracker_restore_returns_original_messages() -> None:
+    message = _FakeResponse(usage=_FakeUsage(input_tokens=10, output_tokens=5))
+    generator = _FakeAnthropicGenerator(model="claude-sonnet-4-6", message=message)
+    original_messages = generator.client.messages
+    tracker = AnthropicCostTracker()
+
+    tracker.wrap(generator)
+    tracker.restore()
+
+    assert generator.client.messages is original_messages
+
+
+def test_null_cost_tracker_has_restore() -> None:
+    tracker = NullCostTracker()
+    tracker.restore()  # must not raise
