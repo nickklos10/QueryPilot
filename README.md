@@ -155,6 +155,67 @@ Available tools:
 - `validate_sql`
 - `execute_sql`
 
+## FastAPI Server
+
+Run QueryPilot as a local safe SQL gateway:
+
+```bash
+.venv/bin/pip install -e ".[server]"
+querypilot serve --database-url sqlite:///demo.db --dialect sqlite --max-rows 100
+```
+
+Or use environment variables:
+
+```bash
+export QUERYPILOT_DATABASE_URL=sqlite:///demo.db
+export QUERYPILOT_DIALECT=sqlite
+querypilot serve
+```
+
+Endpoints:
+
+- `GET /health`
+- `GET /schema`
+- `POST /search-schema`
+- `POST /ask`
+- `POST /generate-sql`
+- `POST /validate-sql`
+- `POST /execute-sql`
+- `POST /evals/run`
+
+Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/validate-sql \
+  -H "content-type: application/json" \
+  -d '{"sql": "SELECT * FROM customers"}'
+```
+
+## MCP Server
+
+Run QueryPilot as an MCP-compatible tool server:
+
+```bash
+.venv/bin/pip install -e ".[mcp]"
+querypilot mcp --database-url sqlite:///demo.db --dialect sqlite
+```
+
+By default, the MCP command uses stdio transport. For clients that support Streamable HTTP:
+
+```bash
+querypilot mcp \
+  --database-url sqlite:///demo.db \
+  --dialect sqlite \
+  --transport streamable-http
+```
+
+MCP tools:
+
+- `ask_database`
+- `search_schema`
+- `validate_sql`
+- `execute_sql`
+
 ## Evaluation Harness
 
 QueryPilot includes a small eval runner so safety behavior can be tested as a product feature:
@@ -198,12 +259,11 @@ Included now:
 - offline demo SQL generation
 - OpenAI and Anthropic tool schema adapters
 - safety eval harness
+- FastAPI server runtime
+- MCP tool server runtime
 
 Deferred:
 
-- hosted LLM provider integration
-- FastAPI server mode
-- MCP server
 - LangChain adapter
 - Snowflake, BigQuery, Databricks, and Redshift connectors
 - authentication and audit storage
