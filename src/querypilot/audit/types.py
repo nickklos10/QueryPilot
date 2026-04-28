@@ -28,6 +28,7 @@ class QueryAuditRecord(BaseModel):
     row_count: int | None = None
     execution_time_ms: int | None = None
     error: str | None = None
+    access_policy: dict = Field(default_factory=dict)
     actor: str | None = None
     session_id: str | None = None
     app_name: str | None = None

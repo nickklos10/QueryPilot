@@ -321,6 +321,51 @@ qp = QueryPilot.connect(
 )
 ```
 
+## Access Control
+
+Read-only SQL is necessary but not enough. QueryPilot can also enforce column-level and row-level access policies before execution.
+
+```python
+from querypilot import QueryPilot
+from querypilot.access import AccessPolicy, MaskingRule
+
+qp = QueryPilot.connect(
+    "sqlite:///demo.db",
+    access_policy=AccessPolicy(
+        blocked_columns={
+            "customers": ["email"],
+        },
+        row_filters={
+            "customers": "tenant_id = 42",
+        },
+        masking_rules={
+            "customers": {
+                "email": MaskingRule(mode="redact"),
+            },
+        },
+    ),
+)
+```
+
+What this does:
+
+- rejects SQL that selects blocked columns
+- rejects SQL outside an allowlist when `allowed_columns` is configured
+- injects required row filters such as `tenant_id = 42`
+- masks configured result columns after execution
+- records the applied access policy in validation, result, answer, and audit metadata
+
+The server and MCP runtimes can also receive access policy JSON:
+
+```bash
+querypilot serve \
+  --database-url sqlite:///demo.db \
+  --access-policy-json '{
+    "row_filters": {"customers": "tenant_id = 42"},
+    "blocked_columns": {"customers": ["ssn"]}
+  }'
+```
+
 ## Current Scope
 
 Included now:
@@ -337,6 +382,7 @@ Included now:
 - FastAPI server runtime
 - MCP tool server runtime
 - in-memory and JSONL audit logging
+- column policies, row filters, and result masking
 
 Deferred:
 

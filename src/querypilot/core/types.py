@@ -64,6 +64,7 @@ class ValidationResult(BaseModel):
     blocked_reason: str | None = None
     policy_checks: list[PolicyCheck] = Field(default_factory=list)
     query_fingerprint: str | None = None
+    access_policy: dict = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
@@ -74,6 +75,7 @@ class QueryResult(BaseModel):
     rows: list[dict] = Field(default_factory=list)
     row_count: int
     execution_time_ms: int
+    access_policy: dict = Field(default_factory=dict)
 
 
 class QueryPilotAnswer(BaseModel):
@@ -84,3 +86,4 @@ class QueryPilotAnswer(BaseModel):
     explanation: str
     validation: ValidationResult
     execution_time_ms: int
+    access_policy: dict = Field(default_factory=dict)

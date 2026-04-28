@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
+from querypilot.access import AccessPolicy
 from querypilot.adapters.anthropic import anthropic_tools
 from querypilot.adapters.openai import openai_tools
 from querypilot.audit import AuditMetadata, AuditSink, InMemoryAuditSink, QueryAuditRecord
@@ -54,6 +55,7 @@ class QueryPilot:
         allowed_tables: list[str] | None = None,
         blocked_tables: list[str] | None = None,
         safety_policy: SafetyPolicy | None = None,
+        access_policy: AccessPolicy | None = None,
         generator: SQLGenerator | None = None,
         audit_sink: AuditSink | None = None,
         audit_metadata: AuditMetadata | None = None,
@@ -67,6 +69,7 @@ class QueryPilot:
             allowed_tables=allowed_tables,
             blocked_tables=blocked_tables,
             safety_policy=safety_policy or SafetyPolicy(),
+            access_policy=access_policy or AccessPolicy(),
         )
         connector = _connector_for(database_url, dialect, timeout_seconds)
         return cls(
@@ -107,10 +110,11 @@ class QueryPilot:
             operation="validate_sql",
             sql=sql,
             rewritten_sql=validation.rewritten_sql,
-            validation=validation,
-            valid=validation.valid,
-            error="; ".join(validation.errors) if validation.errors else None,
-        )
+                validation=validation,
+                valid=validation.valid,
+                access_policy=validation.access_policy,
+                error="; ".join(validation.errors) if validation.errors else None,
+            )
         validation.audit_id = record.audit_id
         return validation
 
@@ -125,10 +129,13 @@ class QueryPilot:
                 validation=validation,
                 valid=validation.valid,
                 executed=False,
+                access_policy=validation.access_policy,
                 error=details,
             )
             raise ValueError(f"SQL validation failed: {details}")
         result = execute(self.connector, validation.rewritten_sql)
+        result.rows = self._apply_masking(result.rows, validation)
+        result.access_policy = validation.access_policy
         record = self._write_audit_record(
             operation="execute_sql",
             sql=sql,
@@ -138,6 +145,7 @@ class QueryPilot:
             executed=True,
             row_count=result.row_count,
             execution_time_ms=result.execution_time_ms,
+            access_policy=validation.access_policy,
         )
         validation.audit_id = record.audit_id
         result.audit_id = record.audit_id
@@ -173,6 +181,8 @@ class QueryPilot:
             raise ValueError("SQL validation failed: unknown validation error")
 
         result = execute(self.connector, validation.rewritten_sql)
+        result.rows = self._apply_masking(result.rows, validation)
+        result.access_policy = validation.access_policy
         explanation = generated.explanation or explain_result(question, result.sql, result.rows)
         record = self._write_audit_record(
             operation="ask",
@@ -184,6 +194,7 @@ class QueryPilot:
             executed=True,
             row_count=result.row_count,
             execution_time_ms=result.execution_time_ms,
+            access_policy=validation.access_policy,
         )
         return QueryPilotAnswer(
             audit_id=record.audit_id,
@@ -193,6 +204,7 @@ class QueryPilot:
             explanation=explanation,
             validation=validation,
             execution_time_ms=result.execution_time_ms,
+            access_policy=validation.access_policy,
         )
 
     def as_openai_tools(self) -> list[dict[str, Any]]:
@@ -234,6 +246,26 @@ class QueryPilot:
         self.audit_sink.write(record)
         return record
 
+    def _apply_masking(self, rows: list[dict], validation: ValidationResult) -> list[dict]:
+        if not rows or not self.config.access_policy.masking_rules:
+            return rows
+
+        rules: dict[str, str] = {}
+        for table_name in validation.tables:
+            for column_name, rule in self.config.access_policy.masking_rules.get(table_name, {}).items():
+                rules[column_name] = rule.mode
+
+        if not rules:
+            return rows
+
+        return [
+            {
+                key: _mask_value(value, rules[key]) if key in rules else value
+                for key, value in row.items()
+            }
+            for row in rows
+        ]
+
 
 def _connector_for(database_url: str, dialect: str, timeout_seconds: int) -> BaseConnector:
     normalized = dialect.lower()
@@ -242,3 +274,13 @@ def _connector_for(database_url: str, dialect: str, timeout_seconds: int) -> Bas
     if normalized in {"postgres", "postgresql"}:
         return PostgresConnector(database_url, timeout_seconds=timeout_seconds)
     raise ValueError(f"Unsupported dialect: {dialect}")
+
+
+def _mask_value(value: Any, mode: str) -> Any:
+    if mode == "null":
+        return None
+    if mode == "hash":
+        import hashlib
+
+        return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
+    return "[REDACTED]"
