@@ -311,6 +311,12 @@ QueryPilot validates SQL before execution with:
 - query fingerprints
 - risk levels: `low`, `medium`, `high`, `critical`
 
+For PostgreSQL production use, connect QueryPilot with a dedicated
+least-privilege role that has only the required schema `USAGE` and table
+`SELECT` grants. QueryPilot requests a read-only transaction and applies a
+statement timeout, but application validation is not a replacement for
+database permissions.
+
 Example:
 
 ```python
