@@ -1,14 +1,3 @@
-from __future__ import annotations
+from querypilot.core.safety_defaults import BLOCKED_POSTGRES_FUNCTIONS
 
-DANGEROUS_KEYWORDS = {
-    "ALTER",
-    "COPY",
-    "CREATE",
-    "DELETE",
-    "DROP",
-    "GRANT",
-    "INSERT",
-    "REVOKE",
-    "TRUNCATE",
-    "UPDATE",
-}
+__all__ = ["BLOCKED_POSTGRES_FUNCTIONS"]

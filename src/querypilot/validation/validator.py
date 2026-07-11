@@ -8,7 +8,6 @@ from sqlglot import exp
 
 from querypilot.core.config import QueryPilotConfig
 from querypilot.core.types import DatabaseSchema, PolicyCheck, ValidationResult
-from querypilot.validation.policies import DANGEROUS_KEYWORDS
 
 
 class SQLValidator:
@@ -78,28 +77,6 @@ class SQLValidator:
             )
         )
 
-        if _contains_dangerous_keyword(stripped):
-            readonly = False
-            errors.append("SQL contains a blocked keyword.")
-            blocked_reason = blocked_reason or "SQL contains a blocked keyword."
-            risk_level = _max_risk(risk_level, "critical")
-            checks.append(
-                PolicyCheck(
-                    name="blocked_keywords",
-                    passed=False,
-                    message="Blocked keyword found.",
-                    severity="critical",
-                )
-            )
-        else:
-            checks.append(
-                PolicyCheck(
-                    name="blocked_keywords",
-                    passed=True,
-                    message="No blocked keywords found.",
-                )
-            )
-
         expression = statements[0]
         checks.append(PolicyCheck(name="parseable", passed=True, message="SQL parsed successfully."))
 
@@ -122,6 +99,54 @@ class SQLValidator:
                     name="readonly_select",
                     passed=True,
                     message="Statement is read-only SELECT.",
+                )
+            )
+
+        non_readonly_operation = _non_readonly_operation(expression)
+        if isinstance(expression, exp.Select) and non_readonly_operation is not None:
+            readonly = False
+            operation_error = (
+                f"SQL contains a non-read-only operation: {non_readonly_operation}"
+            )
+            errors.append(operation_error)
+            blocked_reason = blocked_reason or operation_error
+            risk_level = _max_risk(risk_level, "critical")
+            checks.append(
+                PolicyCheck(
+                    name="statement_safety",
+                    passed=False,
+                    message=operation_error,
+                    severity="critical",
+                )
+            )
+        else:
+            checks.append(
+                PolicyCheck(
+                    name="statement_safety",
+                    passed=True,
+                    message="No nested write or administrative operation found.",
+                )
+            )
+
+        function_error = _function_policy_error(expression, self.config)
+        if function_error is not None:
+            errors.append(function_error)
+            blocked_reason = blocked_reason or function_error
+            risk_level = _max_risk(risk_level, "high")
+            checks.append(
+                PolicyCheck(
+                    name="function_safety",
+                    passed=False,
+                    message=function_error,
+                    severity="high",
+                )
+            )
+        else:
+            checks.append(
+                PolicyCheck(
+                    name="function_safety",
+                    passed=True,
+                    message="SQL functions satisfy policy.",
                 )
             )
 
@@ -302,9 +327,48 @@ class SQLValidator:
         )
 
 
-def _contains_dangerous_keyword(sql: str) -> bool:
-    tokens = set(re.findall(r"[A-Za-z_]+", sql.upper()))
-    return bool(tokens & DANGEROUS_KEYWORDS)
+def _non_readonly_operation(expression: exp.Expression) -> str | None:
+    blocked_types = (
+        exp.Alter,
+        exp.Command,
+        exp.Copy,
+        exp.Create,
+        exp.Delete,
+        exp.Drop,
+        exp.Insert,
+        exp.Merge,
+        exp.TruncateTable,
+        exp.Update,
+    )
+    for node in expression.walk():
+        if node is expression:
+            continue
+        if isinstance(node, blocked_types):
+            return type(node).__name__.upper()
+    return None
+
+
+def _function_policy_error(
+    expression: exp.Expression,
+    config: QueryPilotConfig,
+) -> str | None:
+    blocked = _lower_set(config.safety_policy.blocked_functions)
+    allowed_values = config.safety_policy.allowed_functions
+    allowed = _lower_set(allowed_values) if allowed_values is not None else None
+
+    for function in expression.find_all(exp.Func):
+        function_name = _function_name(function)
+        if function_name in blocked:
+            return f"SQL function is blocked by policy: {function_name}"
+        if allowed is not None and function_name not in allowed:
+            return f"SQL function is not allowed by policy: {function_name}"
+    return None
+
+
+def _function_name(function: exp.Func) -> str:
+    if isinstance(function, exp.Anonymous):
+        return function.name.lower()
+    return function.sql_name().lower()
 
 
 def _normalize_identifier(identifier: str) -> str:
