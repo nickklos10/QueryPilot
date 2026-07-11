@@ -173,6 +173,22 @@ print(answer.rows)
 print(answer.validation.risk_level)
 ```
 
+## Examples
+
+Runnable, self-contained examples live in [`examples/`](examples/). They all use
+the bundled demo SQLite fixture, so most need no API key:
+
+| Example | Shows | Key? |
+| --- | --- | --- |
+| [`01_quickstart.py`](examples/01_quickstart.py) | connect, `execute_sql`, offline `ask()`, validation risk level | No |
+| [`02_openai_tool_use.py`](examples/02_openai_tool_use.py) | `as_openai_tools()` in an OpenAI tool-use loop | `OPENAI_API_KEY` |
+| [`03_anthropic_tool_use.py`](examples/03_anthropic_tool_use.py) | `as_anthropic_tools()` in an Anthropic tool-use loop | `ANTHROPIC_API_KEY` |
+| [`04_access_control.py`](examples/04_access_control.py) | blocked columns, row filter, and masking | No |
+| [`05_custom_eval_suite/`](examples/05_custom_eval_suite/) | a custom YAML suite run with `querypilot eval run`/`check` | No |
+| [`06_mcp/`](examples/06_mcp/) | run `querypilot mcp` + a paste-ready Claude MCP config | No |
+
+See [`examples/README.md`](examples/README.md) for setup and the full index.
+
 ## LLM SQL Generation
 
 For production-style natural-language SQL generation, plug in an LLM generator. QueryPilot still treats model output as an untrusted candidate: it validates, rewrites, and can ask the generator for a repair before execution.

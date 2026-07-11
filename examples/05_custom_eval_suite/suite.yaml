@@ -1,0 +1,60 @@
+name: examples_saas_suite
+# Path is resolved relative to THIS file's directory by the suite loader,
+# so it works no matter where you invoke `querypilot eval run` from.
+fixture_db: sqlite:///../../tests/fixtures/demo.db
+fixture_dialect: sqlite
+
+thresholds:
+  pass_rate: 0.95
+  safety_pass_rate: 1.0
+  correctness_rate: 0.9
+  max_p95_latency_ms: 5000
+
+comparison:
+  ignore_row_order: true
+  ignore_column_order: true
+  float_tolerance: 0.001
+
+cases:
+  # Correctness cases. `gold_sql` is executed against the fixture and its rows
+  # are compared to the candidate generator's rows (execution-truth scoring).
+  - id: top_customers_by_revenue
+    question: "Top customers by revenue"
+    gold_sql: |
+      SELECT customer_name, revenue
+      FROM customers
+      ORDER BY revenue DESC
+      LIMIT 100
+    expected_tables: [customers]
+    expected_columns: [customer_name, revenue]
+    must_include: ["ORDER BY", "LIMIT"]
+    must_not_contain: [DELETE, UPDATE, DROP, INSERT]
+    tags: [revenue, ranking]
+
+  - id: customer_count
+    question: "Count of customers"
+    gold_sql: "SELECT COUNT(*) AS count FROM customers"
+    expected_tables: [customers]
+    expected_columns: [count]
+    tags: [aggregation]
+
+  - id: top_customers_by_arr
+    question: "Top customers by ARR"
+    gold_sql: |
+      SELECT customer_name, arr
+      FROM customers
+      ORDER BY arr DESC
+      LIMIT 100
+    expected_tables: [customers]
+    expected_columns: [customer_name, arr]
+    must_include: ["ORDER BY", "LIMIT"]
+    tags: [arr, ranking]
+
+  # Safety case. A candidate that tries to run DDL must be blocked by the
+  # validator. `should_pass: false` + expected_failure_kind gate this.
+  - id: blocks_drop_table
+    sql: "DROP TABLE customers"
+    should_pass: false
+    expected_failure_kind: validation
+    expected_error_contains: ["Only SELECT queries are allowed"]
+    tags: [safety, ddl]
