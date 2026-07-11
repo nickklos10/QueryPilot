@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 864" width="840" height="864" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" role="img" aria-label="querypilot eval run terminal report">
+  <title>querypilot eval run --suite suites/smoke.yaml</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1b26"/>
+      <stop offset="1" stop-color="#15151d"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#20212e"/>
+      <stop offset="1" stop-color="#1b1c27"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDev="6" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+    <g id="ck">
+      <rect width="13" height="13" rx="3.5" fill="#2ea043"/>
+      <path d="M3 6.6 L5.5 9.1 L10 3.7" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <style>
+      text { font-size: 13px; fill: #a9b1d6; }
+      .d  { fill: #565f89; }
+      .v  { fill: #c9d1e8; }
+      .h  { fill: #c0caf5; font-weight: 600; }
+      .t  { fill: #7aa2f7; font-weight: 700; letter-spacing: .2px; }
+      .g  { fill: #56d364; font-weight: 500; }
+      .tt { fill: #565f89; font-size: 12px; }
+    </style>
+  </defs>
+
+  <!-- window -->
+  <rect x="12" y="10" width="816" height="827" rx="12" fill="url(#bg)" stroke="#2b2c3d" stroke-width="1" filter="url(#shadow)"/>
+
+  <!-- title bar -->
+  <path d="M12 22 A12 12 0 0 1 24 10 H816 A12 12 0 0 1 828 22 V50 H12 Z" fill="url(#bar)"/>
+  <line x1="12" y1="50" x2="828" y2="50" stroke="#2b2c3d" stroke-width="1"/>
+  <circle cx="34" cy="30" r="6" fill="#ff5f57"/>
+  <circle cx="54" cy="30" r="6" fill="#febc2e"/>
+  <circle cx="74" cy="30" r="6" fill="#28c840"/>
+  <text class="tt" x="420" y="34" text-anchor="middle">querypilot eval run --suite suites/smoke.yaml</text>
+
+  <!-- header -->
+  <text class="t" x="24" y="72">QueryPilot Eval Report</text>
+  <text class="d" x="24" y="91">Suite:</text><text class="v" x="110" y="91">smoke</text>
+  <text class="d" x="24" y="110">Generator:</text><text class="v" x="110" y="110">demo</text>
+  <text class="d" x="24" y="129">Database:</text><text class="v" x="110" y="129">sqlite:///tests/fixtures/demo.db</text>
+  <text class="d" x="24" y="148">Started:</text><text class="v" x="110" y="148">2026-04-28 03:27:54Z</text>
+  <text class="d" x="24" y="167">Duration:</text><text class="v" x="110" y="167">0.0s</text>
+
+  <!-- Overall -->
+  <text class="h" x="24" y="205">Overall</text>
+  <use href="#ck" x="24" y="213"/><text class="d" x="46" y="224">Pass rate</text><text class="v" x="300" y="224">3 / 3</text><text class="d" x="372" y="224">(100%)</text>
+  <use href="#ck" x="24" y="232"/><text class="d" x="46" y="243">Safety pass rate</text><text class="v" x="300" y="243">0 / 0</text><text class="d" x="372" y="243">(100%)</text>
+  <use href="#ck" x="24" y="251"/><text class="d" x="46" y="262">Correctness</text><text class="v" x="300" y="262">3 / 3</text><text class="d" x="372" y="262">(100%)</text>
+  <use href="#ck" x="24" y="270"/><text class="d" x="46" y="281">Repair success</text><text class="v" x="300" y="281">0 / 0 repaired</text>
+  <use href="#ck" x="24" y="289"/><text class="d" x="46" y="300">Avg latency</text><text class="v" x="300" y="300">8 ms</text>
+  <use href="#ck" x="24" y="308"/><text class="d" x="46" y="319">P95 latency</text><text class="v" x="300" y="319">18 ms</text>
+  <use href="#ck" x="24" y="327"/><text class="d" x="46" y="338">Estimated cost</text><text class="v" x="300" y="338">$0.00</text>
+
+  <!-- Tag rollups -->
+  <text class="h" x="24" y="376">Tag rollups</text>
+  <text class="d" x="46" y="395">aggregation</text><text x="200" y="395">1 / 1 passed</text><text class="d" x="320" y="395">(100%)</text>
+  <text class="d" x="46" y="414">listing</text><text x="200" y="414">1 / 1 passed</text><text class="d" x="320" y="414">(100%)</text>
+  <text class="d" x="46" y="433">ranking</text><text x="200" y="433">1 / 1 passed</text><text class="d" x="320" y="433">(100%)</text>
+  <text class="d" x="46" y="452">revenue</text><text x="200" y="452">1 / 1 passed</text><text class="d" x="320" y="452">(100%)</text>
+
+  <!-- Failure breakdown -->
+  <text class="h" x="24" y="490">Failure breakdown</text>
+  <text class="d" x="46" y="509">(none)</text>
+
+  <!-- Repair summary -->
+  <text class="h" x="24" y="547">Repair summary</text>
+  <text class="d" x="46" y="566">First-pass success</text><text class="v" x="260" y="566">100%</text>
+  <text class="d" x="46" y="585">Final pass rate</text><text class="v" x="260" y="585">100%</text>
+  <text class="d" x="46" y="604">Repair rate</text><text class="v" x="260" y="604">0%</text>
+  <text class="d" x="46" y="623">Avg repair attempts</text><text class="v" x="260" y="623">0.00</text>
+
+  <!-- Latency & cost -->
+  <text class="h" x="24" y="661">Latency &amp; cost</text>
+  <text class="d" x="46" y="680">generate</text><text class="v" x="260" y="680">1 ms avg</text>
+  <text class="d" x="46" y="699">validate</text><text class="v" x="260" y="699">1 ms avg</text>
+  <text class="d" x="46" y="718">repair</text><text class="v" x="260" y="718">0 ms avg</text><text class="d" x="340" y="718">(when triggered)</text>
+  <text class="d" x="46" y="737">execute</text><text class="v" x="260" y="737">0 ms avg</text>
+  <text class="d" x="46" y="756">total tokens</text><text class="v" x="260" y="756">prompt=0, completion=0</text>
+  <text class="d" x="46" y="775">estimated cost</text><text class="v" x="260" y="775">$0.0000</text>
+
+  <!-- footer -->
+  <use href="#ck" x="24" y="802"/><text class="g" x="46" y="813">No threshold violations.</text>
+</svg>
