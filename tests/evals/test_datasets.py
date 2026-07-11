@@ -203,6 +203,24 @@ def test_import_bird_folds_evidence_into_question(bird_dir: Path, tmp_path: Path
     assert no_evidence.notes is None
 
 
+def test_import_defaults_to_values_only_comparison(spider_dir: Path, tmp_path: Path) -> None:
+    # Spider/BIRD are scored by execution accuracy, so imported suites compare
+    # by values only (ignore_column_names) unless the caller opts out.
+    out = tmp_path / "out"
+    import_dataset(spider_dir, out)
+
+    suite = load_suite(out / "spider_dev_concert_singer.yaml")
+    assert suite.comparison.ignore_column_names is True
+
+
+def test_import_can_opt_out_of_values_only_comparison(spider_dir: Path, tmp_path: Path) -> None:
+    out = tmp_path / "out"
+    import_dataset(spider_dir, out, ignore_column_names=False)
+
+    suite = load_suite(out / "spider_dev_concert_singer.yaml")
+    assert suite.comparison.ignore_column_names is False
+
+
 # --------------------------------------------------------------------------- #
 # Multi-db output shape
 # --------------------------------------------------------------------------- #
@@ -354,6 +372,37 @@ def test_cli_eval_import(spider_dir: Path, tmp_path: Path, capsys) -> None:
     assert "Skipped 1 cases (gold SQL did not execute)" in captured.out
     assert (out / "spider_dev_concert_singer.yaml").exists()
     assert (out / "spider_dev_pets_1.yaml").exists()
+
+
+def test_cli_eval_import_no_ignore_column_names(spider_dir: Path, tmp_path: Path) -> None:
+    from querypilot.cli import main as cli_main
+
+    out = tmp_path / "out"
+    exit_code = cli_main(
+        [
+            "eval",
+            "import",
+            "--dataset",
+            str(spider_dir),
+            "--output",
+            str(out),
+            "--no-ignore-column-names",
+        ]
+    )
+
+    assert exit_code == 0
+    suite = load_suite(out / "spider_dev_concert_singer.yaml")
+    assert suite.comparison.ignore_column_names is False
+
+
+def test_cli_eval_import_defaults_values_only(spider_dir: Path, tmp_path: Path) -> None:
+    from querypilot.cli import main as cli_main
+
+    out = tmp_path / "out"
+    cli_main(["eval", "import", "--dataset", str(spider_dir), "--output", str(out)])
+
+    suite = load_suite(out / "spider_dev_concert_singer.yaml")
+    assert suite.comparison.ignore_column_names is True
 
 
 def test_cli_eval_import_strict_exits(tmp_path: Path) -> None:

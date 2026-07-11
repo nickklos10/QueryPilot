@@ -14,6 +14,11 @@ class ComparisonConfig(BaseModel):
     float_tolerance: float = 0.0
     normalize_datetimes: bool = True
     case_insensitive_strings: bool = False
+    # Compare by VALUES only, ignoring column names entirely (Spider/BIRD-style
+    # execution accuracy). Column *count* must still match; a permutation of the
+    # candidate's columns must reproduce gold's value rows. See
+    # ``querypilot.evals.compare._compare_values_only`` for exact semantics.
+    ignore_column_names: bool = False
 
 
 class SuiteThresholds(BaseModel):

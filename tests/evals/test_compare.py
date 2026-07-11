@@ -6,7 +6,8 @@ from decimal import Decimal
 import pytest
 
 from querypilot.evals.compare import NAN, RowsetMatch, ValueMismatch, compare_rows, has_order_by
-from querypilot.evals.suite import ComparisonConfig
+from querypilot.evals.loader import load_suite, write_suite
+from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite, ComparisonConfig
 
 
 def _rows(*rows: tuple) -> list[dict]:
@@ -430,6 +431,106 @@ def test_normalized_rows_returned_in_result() -> None:
 
     assert result.normalized_gold_rows == [{"x": 1.0}]
     assert result.normalized_candidate_rows == [{"x": 1.0}]
+
+
+# --------------------------------------------------------------------------- #
+# ignore_column_names: values-only (Spider/BIRD execution accuracy) comparison
+# --------------------------------------------------------------------------- #
+
+_VALUES_ONLY = ComparisonConfig(ignore_column_names=True)
+
+
+def test_count_alias_mismatch_passes_with_ignore_column_names() -> None:
+    # The exact failure found today: identical values, different alias.
+    gold = [{"count": 3}]
+    candidate = [{"customer_count": 3}]
+
+    assert compare_rows(gold, candidate, "SELECT COUNT(*) AS count FROM t", _VALUES_ONLY).matched
+    # ...and it still (correctly) fails under the default name-aware comparison.
+    assert not compare_rows(gold, candidate, "SELECT COUNT(*) AS count FROM t").matched
+
+
+def test_ignore_column_names_permuted_columns_distinct_values() -> None:
+    # Candidate presents the columns in a different order under different names;
+    # each column's value multiset is distinct, so there is exactly one mapping.
+    gold = [{"a": 1, "b": 10}, {"a": 2, "b": 20}]
+    candidate = [{"x": 10, "y": 1}, {"x": 20, "y": 2}]
+
+    assert compare_rows(gold, candidate, "SELECT a, b FROM t", _VALUES_ONLY).matched
+    # Name-aware comparison rejects it (columns a,b vs x,y are a set mismatch).
+    assert not compare_rows(gold, candidate, "SELECT a, b FROM t").matched
+
+
+def test_ignore_column_names_identical_multiset_swap_is_accepted_false_positive() -> None:
+    # DOCUMENTED false-positive class: two columns whose value multisets are
+    # identical ({1, 2} each) can swap. The candidate has min/max reversed row by
+    # row, which a name-aware, order-sensitive comparison rightly fails -- but
+    # values-only permutes the columns and reports a match. Accepted for
+    # benchmark scoring (see _compare_values_only docstring).
+    gold = [{"a": 1, "b": 2}, {"a": 2, "b": 1}]
+    candidate = [{"a": 2, "b": 1}, {"a": 1, "b": 2}]
+    sql = "SELECT a, b FROM t ORDER BY a"
+
+    assert not compare_rows(gold, candidate, sql).matched  # name-aware: swapped
+    assert compare_rows(gold, candidate, sql, _VALUES_ONLY).matched  # values-only: passes
+
+
+def test_ignore_column_names_composes_with_row_order_and_float_tolerance() -> None:
+    # Permuted + renamed columns, reordered rows, and values only equal within
+    # tolerance -- all normalizations still apply together.
+    config = ComparisonConfig(ignore_column_names=True, float_tolerance=0.001)
+    gold = [{"a": 1.0001, "b": 10.0}, {"a": 2.0, "b": 20.0}]
+    candidate = [{"x": 20.0, "y": 2.00005}, {"x": 10.00005, "y": 1.0002}]
+
+    assert compare_rows(gold, candidate, "SELECT a, b FROM t", config).matched
+
+
+def test_ignore_column_names_column_count_mismatch_still_fails() -> None:
+    gold = [{"a": 1, "b": 2}]
+    candidate = [{"only": 1}]
+
+    result = compare_rows(gold, candidate, "SELECT a, b FROM t", _VALUES_ONLY)
+
+    assert result.matched is False
+    assert any("column count mismatch" in m for m in result.column_mismatch)
+
+
+def test_ignore_column_names_no_valid_permutation_fails() -> None:
+    # Same column count, but no permutation reproduces gold's values.
+    gold = [{"a": 1, "b": 2}]
+    candidate = [{"x": 1, "y": 3}]
+
+    result = compare_rows(gold, candidate, "SELECT a, b FROM t", _VALUES_ONLY)
+
+    assert result.matched is False
+
+
+def test_ignore_column_names_empty_both_match() -> None:
+    assert compare_rows([], [], "SELECT a FROM t", _VALUES_ONLY).matched
+
+
+def test_ignore_column_names_empty_candidate_fails() -> None:
+    assert not compare_rows([{"a": 1}], [], "SELECT a FROM t", _VALUES_ONLY).matched
+
+
+def test_ignore_column_names_column_cap_raises() -> None:
+    wide = {f"c{i}": i for i in range(17)}
+    with pytest.raises(ValueError, match="at most 16 columns"):
+        compare_rows([wide], [dict(wide)], "SELECT * FROM t", _VALUES_ONLY)
+
+
+def test_ignore_column_names_yaml_round_trip(tmp_path) -> None:
+    suite = BenchmarkSuite(
+        name="values_only",
+        fixture_db="sqlite:///:memory:",
+        comparison=ComparisonConfig(ignore_column_names=True),
+        cases=[BenchmarkCase(id="c0", question="q", gold_sql="SELECT 1")],
+    )
+    path = write_suite(suite, tmp_path / "values_only.yaml")
+
+    loaded = load_suite(path)
+
+    assert loaded.comparison.ignore_column_names is True
 
 
 @pytest.mark.parametrize(
