@@ -18,7 +18,6 @@ from querypilot.evals.pipeline import (
 from querypilot.evals.suite import (
     BenchmarkCase,
     BenchmarkSuite,
-    ComparisonConfig,
     SuiteThresholds,
 )
 

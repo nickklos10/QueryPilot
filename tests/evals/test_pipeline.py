@@ -5,13 +5,11 @@ from pathlib import Path
 import pytest
 
 from querypilot import QueryPilot
-from querypilot.core.types import DatabaseSchema, GeneratedSQL, ValidationResult
+from querypilot.core.types import GeneratedSQL
 from querypilot.evals import (
     BenchmarkCase,
     CaseResult,
     FailureCategory,
-    NullCostTracker,
-    StageTimings,
     run_case,
 )
 

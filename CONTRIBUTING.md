@@ -35,9 +35,8 @@ Optional extras for provider-specific work:
    merged.
 3. **Tests are required.** New behavior needs a unit test; new validator
    guards need a safety-suite case; user-facing CLI changes need a CLI test.
-4. **`/code-review` before merge.** Every PR gets a multi-agent code review
-   pass. Treat issues that score ≥ 80 as blocking; bundle below-threshold
-   real concerns as a follow-up commit.
+4. **Review before merge.** Every PR gets maintainer review, and CI must be
+   green — unit tests, lint, and the smoke eval gate run on every PR.
 5. **Don't break the eval baseline.** CI runs `querypilot eval check` against
    `.eval/baseline.json`. If your change deliberately changes pass/safety/
    correctness rates, regenerate the baseline in the same PR and explain why
