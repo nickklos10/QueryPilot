@@ -23,10 +23,18 @@ def tenant_db_url(tmp_path: Path) -> str:
             revenue INTEGER NOT NULL
         );
 
+        CREATE TABLE orders (
+            id INTEGER PRIMARY KEY,
+            customer_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL
+        );
+
         INSERT INTO customers (tenant_id, customer_name, email, revenue) VALUES
             (42, 'Acme Corp', 'ceo@acme.example', 120000),
             (42, 'Globex', 'finance@globex.example', 95000),
             (7, 'OtherCo', 'owner@other.example', 500000);
+
+        INSERT INTO orders (customer_id, amount) VALUES (1, 1000);
         """
     )
     conn.commit()
@@ -117,3 +125,63 @@ def test_masking_policy_redacts_returned_rows_and_is_audited(tenant_db_url: str)
     assert result.rows[1]["email"] == "[REDACTED]"
     assert result.access_policy["masked_columns"] == {"customers.email": "redact"}
     assert record.access_policy == result.access_policy
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM customers",
+        "SELECT c.email FROM customers AS c",
+        (
+            "SELECT email FROM customers "
+            "JOIN orders ON customers.id = orders.customer_id"
+        ),
+    ],
+)
+def test_blocked_columns_cannot_be_bypassed(tenant_db_url: str, sql: str) -> None:
+    qp = QueryPilot.connect(
+        tenant_db_url,
+        access_policy=AccessPolicy(blocked_columns={"customers": ["email"]}),
+    )
+
+    result = qp.validate_sql(sql)
+
+    assert result.valid is False
+    assert result.blocked_reason == "Column is blocked by access policy: customers.email"
+
+
+def test_allowed_columns_apply_through_alias_and_star(tenant_db_url: str) -> None:
+    qp = QueryPilot.connect(
+        tenant_db_url,
+        access_policy=AccessPolicy(allowed_columns={"customers": ["customer_name"]}),
+    )
+
+    alias = qp.validate_sql("SELECT c.revenue FROM customers AS c")
+    star = qp.validate_sql("SELECT c.* FROM customers AS c")
+
+    assert alias.blocked_reason == "Column is not allowed by access policy: customers.revenue"
+    assert star.valid is False
+    assert star.blocked_reason is not None
+    assert star.blocked_reason.startswith(
+        "Column is not allowed by access policy: customers."
+    )
+
+
+def test_multitable_columns_fail_closed(tenant_db_url: str) -> None:
+    qp = QueryPilot.connect(tenant_db_url)
+
+    unknown = qp.validate_sql(
+        "SELECT missing FROM customers "
+        "JOIN orders ON customers.id = orders.customer_id"
+    )
+    ambiguous = qp.validate_sql(
+        "SELECT id FROM customers JOIN orders ON customers.id = orders.customer_id"
+    )
+    qualified = qp.validate_sql(
+        "SELECT customers.id, orders.amount FROM customers "
+        "JOIN orders ON customers.id = orders.customer_id"
+    )
+
+    assert unknown.blocked_reason == "Unknown column: missing"
+    assert ambiguous.blocked_reason == "Ambiguous column: id"
+    assert qualified.valid is True

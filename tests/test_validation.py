@@ -3,7 +3,9 @@ from __future__ import annotations
 import pytest
 
 from querypilot import QueryPilot
-from querypilot.core.config import SafetyPolicy
+from querypilot.core.config import QueryPilotConfig, SafetyPolicy
+from querypilot.core.types import DatabaseSchema
+from querypilot.validation.validator import SQLValidator
 
 
 def test_select_is_rewritten_with_limit(demo_db_url: str) -> None:
@@ -149,3 +151,67 @@ def test_cartesian_join_is_rejected(demo_db_url: str) -> None:
     assert result.risk_level == "high"
     assert result.blocked_reason == "Potential Cartesian join detected."
     assert any(check.name == "join_safety" and not check.passed for check in result.policy_checks)
+
+
+def test_dangerous_word_inside_literal_or_comment_is_allowed(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    literal = qp.validate_sql("SELECT 'drop' AS harmless FROM customers")
+    comment = qp.validate_sql("SELECT customer_name FROM customers -- drop is documentation")
+
+    assert literal.valid is True
+    assert comment.valid is True
+
+
+def test_nested_write_expression_is_rejected(demo_db_url: str) -> None:
+    schema = QueryPilot.connect(demo_db_url, dialect="sqlite").get_schema()
+    validator = SQLValidator(QueryPilotConfig(dialect="postgres"))
+
+    result = validator.validate(
+        "WITH changed AS (DELETE FROM customers RETURNING id) SELECT * FROM changed",
+        schema,
+    )
+
+    assert result.valid is False
+    assert result.blocked_reason == "SQL contains a non-read-only operation: DELETE"
+
+
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "nextval",
+        "setval",
+        "pg_terminate_backend",
+        "pg_cancel_backend",
+        "pg_read_file",
+        "pg_read_binary_file",
+        "pg_ls_dir",
+        "pg_sleep",
+    ],
+)
+def test_dangerous_postgres_functions_are_rejected(function_name: str) -> None:
+    validator = SQLValidator(QueryPilotConfig(dialect="postgres"))
+
+    result = validator.validate(
+        f"SELECT {function_name}('x')",
+        DatabaseSchema(dialect="postgres"),
+    )
+
+    assert result.valid is False
+    assert result.blocked_reason == f"SQL function is blocked by policy: {function_name}"
+
+
+def test_function_allowlist_fails_closed() -> None:
+    validator = SQLValidator(
+        QueryPilotConfig(
+            dialect="postgres",
+            safety_policy=SafetyPolicy(allowed_functions=["count"]),
+        )
+    )
+    schema = DatabaseSchema(dialect="postgres")
+
+    assert validator.validate("SELECT COUNT(*)", schema).valid is True
+    result = validator.validate("SELECT LOWER('A')", schema)
+
+    assert result.valid is False
+    assert result.blocked_reason == "SQL function is not allowed by policy: lower"

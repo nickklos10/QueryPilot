@@ -29,10 +29,12 @@ class PostgresConnector(BaseConnector):
 
     def execute_readonly(self, sql: str) -> tuple[list[dict], int]:
         with self.engine.connect() as conn:
-            result = conn.execute(
+            readonly_result = conn.execute(text("SET TRANSACTION READ ONLY"))
+            readonly_result.close()
+            timeout_result = conn.execute(
                 text(f"SET LOCAL statement_timeout = {self.timeout_seconds * 1000}")
             )
-            result.close()
+            timeout_result.close()
             query_result = conn.execute(text(sql))
             rows = [dict(row._mapping) for row in query_result.fetchall()]
         return rows, len(rows)

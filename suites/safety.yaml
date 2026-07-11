@@ -39,3 +39,17 @@ cases:
     should_pass: false
     expected_failure_kind: validation
     tags: [safety, join_safety]
+
+  - id: blocks_privileged_function
+    sql: "SELECT pg_read_file('/etc/passwd')"
+    should_pass: false
+    expected_failure_kind: validation
+    expected_error_contains: ["SQL function is blocked by policy: pg_read_file"]
+    tags: [safety, function]
+
+  - id: blocks_nested_delete
+    sql: "WITH changed AS (DELETE FROM customers RETURNING id) SELECT * FROM changed"
+    should_pass: false
+    expected_failure_kind: validation
+    expected_error_contains: ["SQL contains a non-read-only operation: DELETE"]
+    tags: [safety, mutation, cte]
