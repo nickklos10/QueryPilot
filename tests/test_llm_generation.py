@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import types
+
 from querypilot import QueryPilot
 from querypilot.core.types import DatabaseSchema, GeneratedSQL
 from querypilot.generation.llm import (
@@ -96,6 +99,23 @@ class FakeChat:
 class FakeOpenAICompatibleClient:
     def __init__(self, contents: list[str]) -> None:
         self.chat = FakeChat(contents)
+
+
+def _install_fake_openai_module(monkeypatch) -> None:
+    """Stub the `openai` import so the default-client path is testable offline.
+
+    CI installs only `.[dev,eval]` — the openai package is absent — and tests
+    must never construct a real network client anyway.
+    """
+
+    class _FakeOpenAI:
+        def __init__(self, base_url=None, api_key=None):
+            self.base_url = base_url
+            self.api_key = api_key
+
+    module = types.ModuleType("openai")
+    module.OpenAI = _FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", module)
 
 
 class RepairingGenerator:
@@ -208,9 +228,13 @@ def test_openai_compatible_generator_uses_chat_completions_and_extracts_json(
     assert call["messages"][1]["role"] == "user"
 
 
-def test_openai_compatible_generator_defaults_base_url_and_optional_api_key() -> None:
+def test_openai_compatible_generator_defaults_base_url_and_optional_api_key(
+    monkeypatch,
+) -> None:
     # No injected client and no API key: local servers ignore the key, and the
     # base URL defaults to Ollama's endpoint. Construction must not hit the network.
+    _install_fake_openai_module(monkeypatch)
+
     generator = OpenAICompatibleSQLGenerator(model="qwen2.5-coder")
 
     assert generator.model == "qwen2.5-coder"
@@ -218,7 +242,9 @@ def test_openai_compatible_generator_defaults_base_url_and_optional_api_key() ->
     assert generator.client.api_key == "not-needed"
 
 
-def test_openai_compatible_generator_honours_custom_base_url() -> None:
+def test_openai_compatible_generator_honours_custom_base_url(monkeypatch) -> None:
+    _install_fake_openai_module(monkeypatch)
+
     generator = OpenAICompatibleSQLGenerator(base_url="http://localhost:8000/v1")
 
     assert "localhost:8000" in str(generator.client.base_url)

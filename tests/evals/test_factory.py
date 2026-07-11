@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -21,12 +23,29 @@ from querypilot.evals.factory import (
     build_qp_factory,
     load_suite_or_dir,
 )
-from querypilot.generation.llm import OpenAICompatibleSQLGenerator
 from querypilot.evals.suite import BenchmarkCase
+from querypilot.generation.llm import OpenAICompatibleSQLGenerator
 from querypilot.generation.sql_generator import DemoSQLGenerator
 
 
 FIXTURE_DB = Path(__file__).resolve().parents[1] / "fixtures" / "demo.db"
+
+
+def _install_fake_openai_module(monkeypatch) -> None:
+    """Stub the `openai` import so factory tests run offline without the extra.
+
+    CI installs only `.[dev,eval]` — the openai package is absent — and tests
+    must never construct a real network client anyway.
+    """
+
+    class _FakeOpenAI:
+        def __init__(self, base_url=None, api_key=None):
+            self.base_url = base_url
+            self.api_key = api_key
+
+    module = types.ModuleType("openai")
+    module.OpenAI = _FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", module)
 
 
 def test_build_generator_demo_returns_demo_instance() -> None:
@@ -72,7 +91,9 @@ def test_build_cost_tracker_factory_unknown_raises() -> None:
         build_cost_tracker_factory("notreal")
 
 
-def test_build_generator_openai_compatible_from_flags() -> None:
+def test_build_generator_openai_compatible_from_flags(monkeypatch) -> None:
+    _install_fake_openai_module(monkeypatch)
+
     generator = build_generator(
         "openai-compatible",
         model="qwen2.5-coder",
@@ -84,7 +105,11 @@ def test_build_generator_openai_compatible_from_flags() -> None:
     assert "localhost:8000" in str(generator.client.base_url)
 
 
-def test_build_generator_openai_compatible_defaults_model_and_base_url() -> None:
+def test_build_generator_openai_compatible_defaults_model_and_base_url(
+    monkeypatch,
+) -> None:
+    _install_fake_openai_module(monkeypatch)
+
     generator = build_generator("openai-compatible")
 
     assert isinstance(generator, OpenAICompatibleSQLGenerator)
