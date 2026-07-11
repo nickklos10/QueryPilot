@@ -10,6 +10,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - README hero image (`docs/assets/eval-report.svg`) — a self-contained SVG
   rendering of the `querypilot eval run` terminal report.
+- First-class [`examples/`](examples/) directory: offline quickstart, OpenAI
+  and Anthropic tool-use loops, an access-control walkthrough (blocked columns,
+  row filters, masking), a custom eval suite with `querypilot eval run`/`check`,
+  and an MCP server guide with a paste-ready Claude Desktop / Claude Code config.
 - `SECURITY.md` security policy, Contributor Covenant code of conduct, issue
   templates, and a pull-request template.
 - PyPI release workflow (`.github/workflows/release.yml`) using trusted
