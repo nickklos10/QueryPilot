@@ -17,6 +17,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `eval run`), a GitHub-flavored markdown table for blog posts, and
   machine-readable JSON (`--output` / `--format`). New
   `querypilot.evals.leaderboard` module.
+- Dataset importer (`querypilot eval import`) that converts locally-downloaded
+  **Spider 1.0** and **BIRD** dev sets into QueryPilot benchmark suites. It is
+  file-based only (no network, no vendored dataset data — both are CC BY-SA),
+  auto-detects Spider vs BIRD (or takes `--format`), writes **one suite YAML per
+  `db_id`** (a `BenchmarkSuite` binds a single `fixture_db`, so a many-db dataset
+  maps to a directory of per-db suites), carries BIRD `evidence` into the
+  question, supports `--limit`/`--db` filtering with stable case ids, validates
+  that each referenced SQLite fixture exists, and warns+skips cases whose gold
+  SQL fails to execute (`--strict` to error instead). New
+  `querypilot.evals.datasets` module with `import_dataset` / `detect_format` /
+  `ImportResult` exports.
 
 ## [0.1.1] - 2026-07-11
 
