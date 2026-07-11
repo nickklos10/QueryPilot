@@ -21,6 +21,14 @@ from querypilot.evals.factory import (
     build_qp_factory,
     load_suite_or_dir,
 )
+from querypilot.evals.leaderboard import (
+    Leaderboard,
+    LeaderboardEntry,
+    LeaderboardError,
+    build_leaderboard,
+    default_label,
+    load_leaderboard,
+)
 from querypilot.evals.loader import SuiteLoadError, load_suite, load_suite_dir, write_suite
 from querypilot.evals.replay import replay_from_jsonl, replay_from_sink
 from querypilot.evals.pipeline import (
@@ -49,6 +57,9 @@ __all__ = [
     "ComparisonConfig",
     "CostTracker",
     "FailureCategory",
+    "Leaderboard",
+    "LeaderboardEntry",
+    "LeaderboardError",
     "NullCostTracker",
     "OpenAICostTracker",
     "RowsetMatch",
@@ -61,11 +72,14 @@ __all__ = [
     "ValueMismatch",
     "build_cost_tracker_factory",
     "build_generator",
+    "build_leaderboard",
     "build_qp_factory",
     "check_report",
     "compare_rows",
+    "default_label",
     "format_outcome",
     "has_order_by",
+    "load_leaderboard",
     "load_report",
     "load_suite",
     "load_suite_dir",

@@ -529,6 +529,221 @@ def test_eval_init_uses_placeholder_fixture_path(tmp_path: Path, capsys) -> None
     assert "# Update fixture_db" in smoke
 
 
+def _named_suite(tmp_path: Path, fixture_db_path: Path, name: str) -> Path:
+    suite = tmp_path / f"{name}.yaml"
+    suite.write_text(
+        f"""
+name: {name}
+fixture_db: sqlite:///{fixture_db_path}
+fixture_dialect: sqlite
+cases:
+  - id: count_customers
+    question: "Count of customers"
+    gold_sql: "SELECT COUNT(*) AS count FROM customers"
+    expected_tables: [customers]
+    tags: [smoke]
+""",
+        encoding="utf-8",
+    )
+    return suite
+
+
+def _run_report(
+    tmp_path: Path, fixture_db_path: Path, *, suite_name: str, out_name: str
+) -> Path:
+    suite = _named_suite(tmp_path, fixture_db_path, suite_name)
+    report_path = tmp_path / out_name
+    cli_main(
+        [
+            "eval",
+            "run",
+            "--suite",
+            str(suite),
+            "--database-url",
+            f"sqlite:///{fixture_db_path}",
+            "--generator",
+            "demo",
+            "--report",
+            str(report_path),
+            "--no-color",
+        ]
+    )
+    return report_path
+
+
+def test_eval_leaderboard_end_to_end_writes_json(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    a = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="a.json")
+    b = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="b.json")
+    capsys.readouterr()  # discard the two run reports
+
+    board_json = tmp_path / "board.json"
+    exit_code = cli_main(
+        [
+            "eval",
+            "leaderboard",
+            "--report",
+            str(a),
+            "--report",
+            str(b),
+            "--output",
+            str(board_json),
+            "--no-color",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "QueryPilot Eval Leaderboard" in captured.out
+
+    from querypilot.evals import Leaderboard
+
+    board = Leaderboard.model_validate_json(board_json.read_text())
+    assert len(board.entries) == 2
+    assert board.entries[0].rank == 1
+
+
+def test_eval_leaderboard_writes_markdown(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    a = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="a.json")
+    capsys.readouterr()
+
+    board_md = tmp_path / "board.md"
+    exit_code = cli_main(
+        [
+            "eval",
+            "leaderboard",
+            "--report",
+            str(a),
+            "--output",
+            str(board_md),
+        ]
+    )
+
+    assert exit_code == 0
+    assert board_md.read_text(encoding="utf-8").startswith("| Rank |")
+
+
+def test_eval_leaderboard_format_json_to_stdout(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    a = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="a.json")
+    capsys.readouterr()
+
+    exit_code = cli_main(
+        ["eval", "leaderboard", "--report", str(a), "--format", "json"]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["entries"][0]["rank"] == 1
+
+
+def test_eval_leaderboard_refuses_mixed_suites(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    a = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="a.json")
+    b = _run_report(tmp_path, fixture_db_path, suite_name="cli_safety", out_name="b.json")
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit, match="multiple suites"):
+        cli_main(
+            [
+                "eval",
+                "leaderboard",
+                "--report",
+                str(a),
+                "--report",
+                str(b),
+                "--no-color",
+            ]
+        )
+
+
+def test_eval_leaderboard_force_allows_mixed_suites(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    a = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="a.json")
+    b = _run_report(tmp_path, fixture_db_path, suite_name="cli_safety", out_name="b.json")
+    capsys.readouterr()
+
+    exit_code = cli_main(
+        [
+            "eval",
+            "leaderboard",
+            "--report",
+            str(a),
+            "--report",
+            str(b),
+            "--force",
+            "--no-color",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "Warnings" in captured.out
+
+
+def test_eval_leaderboard_labels_override_in_terminal(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    a = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="a.json")
+    b = _run_report(tmp_path, fixture_db_path, suite_name="cli_smoke", out_name="b.json")
+    capsys.readouterr()
+
+    exit_code = cli_main(
+        [
+            "eval",
+            "leaderboard",
+            "--report",
+            str(a),
+            "--report",
+            str(b),
+            "--labels",
+            "Alpha Model,Beta Model",
+            "--no-color",
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "Alpha Model" in captured.out
+    assert "Beta Model" in captured.out
+
+
+def test_eval_leaderboard_accepts_directory_of_reports(
+    tmp_path: Path, fixture_db_path: Path, capsys
+) -> None:
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    _run_report(
+        reports_dir, fixture_db_path, suite_name="cli_smoke", out_name="a.json"
+    )
+    _run_report(
+        reports_dir, fixture_db_path, suite_name="cli_smoke", out_name="b.json"
+    )
+    capsys.readouterr()
+
+    exit_code = cli_main(
+        [
+            "eval",
+            "leaderboard",
+            "--report",
+            str(reports_dir),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert len(payload["entries"]) == 2
+
+
 def test_eval_run_no_color_strips_ansi(
     tmp_path: Path, fixture_db_path: Path, capsys
 ) -> None:
