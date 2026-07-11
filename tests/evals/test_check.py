@@ -8,12 +8,10 @@ import pytest
 
 from querypilot.evals import (
     CaseResult,
-    CheckOutcome,
     FailureCategory,
     StageTimings,
     SuiteReport,
     SuiteThresholds,
-    TagRollup,
     check_report,
     format_outcome,
     load_report,

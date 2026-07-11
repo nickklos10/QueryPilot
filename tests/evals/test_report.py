@@ -4,11 +4,9 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
 
 from querypilot.evals import (
     CaseResult,
-    FailureCategory,
     StageTimings,
     SuiteReport,
     SuiteThresholds,

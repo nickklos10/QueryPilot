@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  eval:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,7 +14,28 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff check
+        run: ruff check src tests
+
+  eval:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install package
@@ -46,5 +67,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: eval-report
+          name: eval-report-py${{ matrix.python-version }}
           path: eval-out.json

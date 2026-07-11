@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `SECURITY.md` security policy, Contributor Covenant code of conduct, issue
+  templates, and a pull-request template.
+- PyPI release workflow (`.github/workflows/release.yml`) using trusted
+  publishing, triggered by publishing a GitHub Release.
+
+### Changed
+
+- CI now tests Python 3.11, 3.12, and 3.13 and runs `ruff check` as a
+  separate lint job.
+
+### Removed
+
+- Internal planning documents from `docs/`.
+
 ## [0.1.0] - 2026-04-28
 
 Initial public release. Foundation and eval-driven harness shipped.
