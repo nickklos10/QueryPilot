@@ -48,6 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_eval_check_args(eval_check_parser)
 
+    eval_leaderboard_parser = eval_subparsers.add_parser(
+        "leaderboard",
+        help="Rank N SuiteReport JSONs (same suite, different models) into a table.",
+    )
+    _add_eval_leaderboard_args(eval_leaderboard_parser)
+
     eval_init_parser = eval_subparsers.add_parser(
         "init",
         help="Scaffold suites/ and .eval/ in the current directory.",
@@ -78,6 +84,8 @@ def main(argv: list[str] | None = None) -> int:
             return _eval_replay(args)
         if args.eval_command == "check":
             return _eval_check(args)
+        if args.eval_command == "leaderboard":
+            return _eval_leaderboard(args)
         if args.eval_command == "init":
             return _eval_init(args)
         raise SystemExit(f"Unknown eval subcommand: {args.eval_command}")
@@ -194,6 +202,53 @@ def _add_eval_check_args(parser: argparse.ArgumentParser) -> None:
         "--outcome-json",
         default=None,
         help="Optional path to write the structured CheckOutcome JSON.",
+    )
+
+
+def _add_eval_leaderboard_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--report",
+        action="append",
+        default=[],
+        required=True,
+        metavar="PATH",
+        help=(
+            "SuiteReport JSON to include (repeatable). A directory expands to "
+            "its *.json files; glob patterns are also accepted."
+        ),
+    )
+    parser.add_argument(
+        "--labels",
+        default=None,
+        help=(
+            "Comma-separated labels overriding the generator/model names, in "
+            "report order. Must match the resolved report count."
+        ),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow aggregating reports that span different suites.",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        metavar="PATH",
+        help="Optional path to write the leaderboard as a file (see --format).",
+    )
+    parser.add_argument(
+        "--format",
+        default=None,
+        choices=("md", "json"),
+        help=(
+            "Writer for --output. Defaults to the file extension "
+            "(.md -> md, .json -> json)."
+        ),
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable ANSI colors in terminal output.",
     )
 
 
@@ -353,6 +408,83 @@ def _eval_check(args: argparse.Namespace) -> int:
 
     print(format_outcome(outcome))
     return 0 if outcome.ok else 1
+
+
+def _eval_leaderboard(args: argparse.Namespace) -> int:
+    from querypilot.evals.check import load_report
+    from querypilot.evals.leaderboard import (
+        LeaderboardError,
+        build_leaderboard,
+        render_markdown,
+        render_terminal,
+        write_json,
+        write_markdown,
+    )
+
+    paths = _resolve_report_paths(args.report)
+    if not paths:
+        raise SystemExit("No report files matched the given --report values.")
+
+    reports = [load_report(path) for path in paths]
+
+    labels: list[str] | None = None
+    if args.labels:
+        labels = [item.strip() for item in args.labels.split(",")]
+
+    try:
+        board = build_leaderboard(reports, labels=labels, force=args.force)
+    except LeaderboardError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if args.output:
+        fmt = args.format or _infer_leaderboard_format(args.output)
+        if fmt == "md":
+            write_markdown(board, args.output)
+        elif fmt == "json":
+            write_json(board, args.output)
+        else:
+            raise SystemExit(
+                f"Cannot infer output format from {args.output!r}; pass "
+                f"--format md|json."
+            )
+        # A file was written; keep stdout as the readable terminal render.
+        print(render_terminal(board, color=not args.no_color))
+    elif args.format == "md":
+        print(render_markdown(board))
+    elif args.format == "json":
+        print(board.model_dump_json(indent=2))
+    else:
+        print(render_terminal(board, color=not args.no_color))
+    return 0
+
+
+def _resolve_report_paths(values: list[str]) -> list[str]:
+    import glob
+
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        candidate = Path(value)
+        if candidate.is_dir():
+            matches = sorted(str(p) for p in candidate.glob("*.json"))
+        elif any(ch in value for ch in "*?["):
+            matches = sorted(glob.glob(value))
+        else:
+            matches = [value]
+        for match in matches:
+            if match not in seen:
+                seen.add(match)
+                resolved.append(match)
+    return resolved
+
+
+def _infer_leaderboard_format(path: str) -> str | None:
+    suffix = Path(path).suffix.lower()
+    if suffix in (".md", ".markdown"):
+        return "md"
+    if suffix == ".json":
+        return "json"
+    return None
 
 
 def _eval_init(args: argparse.Namespace) -> int:

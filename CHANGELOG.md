@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `querypilot eval leaderboard` — aggregate N `SuiteReport` JSONs (the same
+  suite run against different generators/models) into a ranked comparison of
+  pass rate, safety, correctness, repair rate, p50/p95 latency, cost, and
+  tokens. Ranks by pass rate (tie-broken by safety then cost), warns when
+  reports disagree on suite name or case count, and refuses to mix different
+  suites without `--force`. Renders an aligned terminal table (matching
+  `eval run`), a GitHub-flavored markdown table for blog posts, and
+  machine-readable JSON (`--output` / `--format`). New
+  `querypilot.evals.leaderboard` module.
+
 ## [0.1.1] - 2026-07-11
 
 ### Added
