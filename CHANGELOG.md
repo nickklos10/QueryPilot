@@ -8,6 +8,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ComparisonConfig.ignore_column_names` (suite-YAML-settable) — compare
+  candidate results to gold by **values only**, ignoring the column aliases the
+  model chose (Spider/BIRD "execution accuracy"). Column count must still match;
+  a candidate passes when some permutation of its columns reproduces gold's
+  value rows under the existing normalizations (row-order-insensitivity, float
+  tolerance, datetime/case/NaN handling). The permutation is found with
+  backtracking pruned by column value-multiset compatibility — not brute-force
+  factorial — and wide result sets (>16 columns) error clearly rather than run
+  unbounded. Fixes false-negatives where identical values failed on an alias
+  mismatch (e.g. `COUNT(*) AS customer_count` vs gold `COUNT(*) AS count`); the
+  accepted trade is that two columns with identical value multisets may swap and
+  still match. The Spider/BIRD importer (`querypilot eval import`) now emits
+  suites with `ignore_column_names: true` by default (matching upstream
+  scoring), with `--no-ignore-column-names` to write name-aware suites instead.
 - `querypilot eval leaderboard` — aggregate N `SuiteReport` JSONs (the same
   suite run against different generators/models) into a ranked comparison of
   pass rate, safety, correctness, repair rate, p50/p95 latency, cost, and

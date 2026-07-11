@@ -24,6 +24,9 @@ comparison:
   float_tolerance: 0.001
   normalize_datetimes: true
   case_insensitive_strings: false
+  # Set true for Spider/BIRD-style execution accuracy: compare by values only,
+  # ignoring column names/aliases (column count must still match).
+  ignore_column_names: false
 
 # Replace these with cases that exercise your own schema. gold_sql is
 # the SQL we expect to be functionally equivalent to what the generator

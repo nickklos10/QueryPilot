@@ -47,7 +47,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from querypilot.evals.loader import write_suite
-from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite
+from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite, ComparisonConfig
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +128,7 @@ def import_dataset(
     db_ids: list[str] | None = None,
     strict: bool = False,
     name_prefix: str | None = None,
+    ignore_column_names: bool = True,
 ) -> ImportResult:
     """Import a Spider/BIRD dev set into one ``BenchmarkSuite`` YAML per db_id.
 
@@ -151,6 +152,13 @@ def import_dataset(
         SQLite file is missing or a gold query fails to execute.
     name_prefix:
         Override the id/name prefix (defaults to ``spider_dev`` / ``bird_dev``).
+    ignore_column_names:
+        Emit each per-db suite with ``comparison.ignore_column_names: true``
+        (the default). Spider and BIRD are scored upstream by *execution
+        accuracy* — result values are compared ignoring the column aliases the
+        model happened to choose — so this matches how those benchmarks are
+        graded. Set ``False`` to write name-aware suites (compare columns by
+        name, QueryPilot's default everywhere else).
     """
     root = Path(dataset_dir)
     if not root.is_dir():
@@ -224,7 +232,9 @@ def import_dataset(
             if cached is not None:
                 cached[1].dispose()
 
-    result.written_suites = _write_suites(cases_by_db, fixture_by_db, prefix, Path(output_dir))
+    result.written_suites = _write_suites(
+        cases_by_db, fixture_by_db, prefix, Path(output_dir), ignore_column_names
+    )
     return result
 
 
@@ -233,14 +243,17 @@ def _write_suites(
     fixture_by_db: dict[str, str],
     prefix: str,
     output_dir: Path,
+    ignore_column_names: bool,
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    comparison = ComparisonConfig(ignore_column_names=ignore_column_names)
     written: list[Path] = []
     for db_id, cases in cases_by_db.items():
         suite = BenchmarkSuite(
             name=f"{prefix}_{db_id}",
             fixture_db=fixture_by_db[db_id],
             fixture_dialect="sqlite",
+            comparison=comparison,
             cases=cases,
         )
         out_path = output_dir / f"{prefix}_{_safe_filename(db_id)}.yaml"

@@ -299,6 +299,15 @@ def _add_eval_import_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Error instead of warn+skip on missing fixtures or non-executable gold SQL.",
     )
+    parser.add_argument(
+        "--no-ignore-column-names",
+        action="store_true",
+        help=(
+            "Write name-aware suites (compare result columns by name). By default "
+            "imported Spider/BIRD suites set comparison.ignore_column_names=true, "
+            "matching those benchmarks' values-only execution accuracy."
+        ),
+    )
 
 
 def _add_eval_run_args(parser: argparse.ArgumentParser) -> None:
@@ -589,6 +598,7 @@ def _eval_import(args: argparse.Namespace) -> int:
             db_ids=args.db or None,
             strict=args.strict,
             name_prefix=args.name_prefix,
+            ignore_column_names=not args.no_ignore_column_names,
         )
     except DatasetImportError as exc:
         raise SystemExit(f"Import failed: {exc}") from exc
