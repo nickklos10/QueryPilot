@@ -53,6 +53,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   but always estimates $0, so reports show real token counts without bogus
   dollar figures. Paired automatically with the `openai-compatible` generator.
 
+### Fixed
+
+- `MODEL_PRICING` in `querypilot.evals.cost` predated the 2026 model lineup, so
+  hosted models such as `gpt-5.4-nano` silently estimated **$0** cost —
+  corrupting the benchmark's cost-per-query headline. Refreshed the table
+  against the official OpenAI
+  (<https://developers.openai.com/api/docs/pricing>) and Anthropic
+  (<https://platform.claude.com/docs/en/about-claude/pricing>) pricing pages as
+  of 2026-07-11 (GPT-5.4/5.5/5.6 tiers; Claude Opus 4.8/4.7, Sonnet 5,
+  Haiku 4.5), with a source-URL + as-of-date comment block. Model ids now
+  resolve by exact match then longest-prefix family fallback, so dated
+  snapshots (e.g. `gpt-5.4-nano-2026-03-17`) inherit their family price.
+  Models still missing from the table now emit a one-time `warnings.warn`
+  naming the model and fall back to $0 (previously silent), while
+  `LocalCostTracker` and `NullCostTracker` remain warning-free $0 by design.
+
 ## [0.1.1] - 2026-07-11
 
 ### Added
