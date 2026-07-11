@@ -1,0 +1,88 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nickklos10/querypilot",
+  "title": "QueryPilot",
+  "description": "Safe SQL gateway for AI agents: SELECT-only validation, access policies, masking, audit trail, evals",
+  "websiteUrl": "https://github.com/nickklos10/QueryPilot#mcp-server",
+  "repository": {
+    "url": "https://github.com/nickklos10/QueryPilot",
+    "source": "github",
+    "id": "1223044760"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "querypilot",
+      "version": "0.1.1",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Selects the `querypilot mcp` subcommand (as opposed to `serve` or `eval`)."
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "QUERYPILOT_DATABASE_URL",
+          "description": "SQLAlchemy-style database connection URL, e.g. sqlite:///demo.db or postgresql://user:pass@host:5432/db. Equivalent to --database-url.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "QUERYPILOT_DIALECT",
+          "description": "SQL dialect for the connector. Equivalent to --dialect.",
+          "default": "sqlite",
+          "choices": [
+            "sqlite",
+            "postgres",
+            "postgresql"
+          ],
+          "format": "string"
+        },
+        {
+          "name": "QUERYPILOT_MAX_ROWS",
+          "description": "Maximum rows returned per query. Equivalent to --max-rows.",
+          "default": "100",
+          "format": "number"
+        },
+        {
+          "name": "QUERYPILOT_TIMEOUT_SECONDS",
+          "description": "Query execution timeout in seconds. Equivalent to --timeout-seconds.",
+          "default": "10",
+          "format": "number"
+        },
+        {
+          "name": "QUERYPILOT_ACCESS_POLICY_JSON",
+          "description": "JSON-encoded AccessPolicy (blocked_columns, allowed_columns, row_filters, masking_rules) enforced before execution. Equivalent to --access-policy-json.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "QUERYPILOT_MCP_TRANSPORT",
+          "description": "MCP transport used by `querypilot mcp`. Equivalent to --transport. Most MCP clients should leave this at stdio; streamable-http is for clients that speak Streamable HTTP directly.",
+          "default": "stdio",
+          "choices": [
+            "stdio",
+            "streamable-http",
+            "sse"
+          ],
+          "format": "string"
+        }
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "tool": "manual",
+      "version": "0.1.1"
+    }
+  }
+}
