@@ -48,6 +48,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_eval_check_args(eval_check_parser)
 
+    eval_import_parser = eval_subparsers.add_parser(
+        "import",
+        help="Convert a downloaded Spider/BIRD dev set into per-db benchmark suites.",
+    )
+    _add_eval_import_args(eval_import_parser)
+
     eval_leaderboard_parser = eval_subparsers.add_parser(
         "leaderboard",
         help="Rank N SuiteReport JSONs (same suite, different models) into a table.",
@@ -84,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
             return _eval_replay(args)
         if args.eval_command == "check":
             return _eval_check(args)
+        if args.eval_command == "import":
+            return _eval_import(args)
         if args.eval_command == "leaderboard":
             return _eval_leaderboard(args)
         if args.eval_command == "init":
@@ -249,6 +257,47 @@ def _add_eval_leaderboard_args(parser: argparse.ArgumentParser) -> None:
         "--no-color",
         action="store_true",
         help="Disable ANSI colors in terminal output.",
+    )
+
+
+def _add_eval_import_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--dataset",
+        required=True,
+        help="Path to an extracted Spider/BIRD dev directory (contains dev.json).",
+    )
+    parser.add_argument(
+        "--output",
+        required=True,
+        help="Output directory for the per-db suite YAML files.",
+    )
+    parser.add_argument(
+        "--format",
+        default=None,
+        choices=("spider", "bird"),
+        help="Dataset format. Auto-detected from the directory layout when omitted.",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum number of cases to import (skipped cases do not count).",
+    )
+    parser.add_argument(
+        "--db",
+        action="append",
+        default=[],
+        help="Only import cases for this db_id (repeatable).",
+    )
+    parser.add_argument(
+        "--name-prefix",
+        default=None,
+        help="Override the id/suite-name prefix (default: spider_dev / bird_dev).",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Error instead of warn+skip on missing fixtures or non-executable gold SQL.",
     )
 
 
@@ -516,6 +565,35 @@ def _eval_replay(args: argparse.Namespace) -> int:
 
     target = write_suite(suite, args.output)
     print(f"Wrote {len(suite.cases)} cases to {target}")
+    return 0
+
+
+def _eval_import(args: argparse.Namespace) -> int:
+    from querypilot.evals.datasets import DatasetImportError, import_dataset
+
+    try:
+        result = import_dataset(
+            args.dataset,
+            args.output,
+            dataset_format=args.format,
+            limit=args.limit,
+            db_ids=args.db or None,
+            strict=args.strict,
+            name_prefix=args.name_prefix,
+        )
+    except DatasetImportError as exc:
+        raise SystemExit(f"Import failed: {exc}") from exc
+
+    print(
+        f"Imported {result.imported_cases} {result.dataset_format} cases into "
+        f"{result.db_count} per-db suites at {result.output_dir}"
+    )
+    if result.skipped_missing_fixture:
+        print(f"  Skipped {result.skipped_missing_fixture} cases (missing fixture db).")
+    if result.skipped_bad_gold:
+        print(f"  Skipped {result.skipped_bad_gold} cases (gold SQL did not execute).")
+    if result.skipped_malformed:
+        print(f"  Skipped {result.skipped_malformed} malformed records.")
     return 0
 
 

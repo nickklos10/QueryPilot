@@ -8,6 +8,13 @@ from querypilot.evals.check import (
     write_outcome,
 )
 from querypilot.evals.compare import RowsetMatch, ValueMismatch, compare_rows, has_order_by
+from querypilot.evals.datasets import (
+    DatasetFormat,
+    DatasetImportError,
+    ImportResult,
+    detect_format,
+    import_dataset,
+)
 from querypilot.evals.cost import (
     AnthropicCostTracker,
     CostTracker,
@@ -56,7 +63,10 @@ __all__ = [
     "CheckSummary",
     "ComparisonConfig",
     "CostTracker",
+    "DatasetFormat",
+    "DatasetImportError",
     "FailureCategory",
+    "ImportResult",
     "Leaderboard",
     "LeaderboardEntry",
     "LeaderboardError",
@@ -77,8 +87,10 @@ __all__ = [
     "check_report",
     "compare_rows",
     "default_label",
+    "detect_format",
     "format_outcome",
     "has_order_by",
+    "import_dataset",
     "load_leaderboard",
     "load_report",
     "load_suite",
