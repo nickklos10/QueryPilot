@@ -8,6 +8,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- README hero image (`docs/assets/eval-report.svg`) — a self-contained SVG
+  rendering of the `querypilot eval run` terminal report.
 - `SECURITY.md` security policy, Contributor Covenant code of conduct, issue
   templates, and a pull-request template.
 - PyPI release workflow (`.github/workflows/release.yml`) using trusted

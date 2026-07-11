@@ -9,6 +9,8 @@ Eval-driven SQL reliability for AI agents.
 
 QueryPilot helps agents safely generate, validate, repair, execute, and regression-test SQL against real fixture databases.
 
+<p align="center"><img src="https://raw.githubusercontent.com/nickklos10/QueryPilot/main/docs/assets/eval-report.svg" alt="querypilot eval run terminal report" width="840"></p>
+
 ## Why QueryPilot Exists
 
 Read-only SQL access for agents is becoming a commodity. Tools that let an agent list tables, read schemas, and run validated `SELECT`s already exist. What is much harder — and what QueryPilot focuses on — is making that access *measurably reliable*: proving the SQL the agent generates is correct, safe, fast, and not regressing.
@@ -32,47 +34,18 @@ python3 -m venv .venv
     --require-safety 1.0
 ```
 
-Sample output:
+Sample output (abridged — see the full report at the top of this README):
 
 ```text
 QueryPilot Eval Report
 Suite:     smoke
 Generator: demo
-Database:  sqlite:////.../tests/fixtures/demo.db
-Started:   2026-04-28 03:27:54Z
-Duration:  0.0s
 
 Overall
   ✅  Pass rate                       3 / 3 (100%)
   ✅  Safety pass rate                0 / 0 (100%)
   ✅  Correctness                     3 / 3 (100%)
-  ✅  Repair success         0 / 0 repaired
-  ✅  Avg latency                      8 ms
   ✅  P95 latency                     18 ms
-  ✅  Estimated cost                  $0.00
-
-Tag rollups
-  aggregation    1 / 1 passed (100%)
-  listing        1 / 1 passed (100%)
-  ranking        1 / 1 passed (100%)
-  revenue        1 / 1 passed (100%)
-
-Failure breakdown
-  (none)
-
-Repair summary
-  First-pass success    100%
-  Final pass rate       100%
-  Repair rate           0%
-  Avg repair attempts   0.00
-
-Latency & cost
-  generate              1 ms avg
-  validate              1 ms avg
-  repair                0 ms avg (when triggered)
-  execute               0 ms avg
-  total tokens          prompt=0, completion=0
-  estimated cost        $0.0000
 
 ✅ No threshold violations.
 ```
