@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
 
 import sqlglot
 from sqlglot import exp
@@ -150,7 +151,8 @@ class SQLValidator:
                 )
             )
 
-        tables = sorted({_normalize_identifier(table.name) for table in expression.find_all(exp.Table)})
+        relation_scope = _relation_scope(expression)
+        tables = list(relation_scope.tables)
         columns = sorted(
             {
                 _normalize_identifier(column.name)
@@ -186,30 +188,34 @@ class SQLValidator:
             )
         )
 
-        if len(tables) == 1:
-            table = schema.get_table(tables[0])
-            if table is not None:
-                known_columns = {column.name.lower() for column in table.columns}
-                for column_name in columns:
-                    if column_name.lower() not in known_columns:
-                        errors.append(f"Unknown column: {column_name}")
-                        blocked_reason = blocked_reason or f"Unknown column: {column_name}"
-        elif len(tables) > 1:
-            warnings.append("Column validation is limited for multi-table queries.")
+        column_refs, column_errors = _resolve_column_references(
+            expression,
+            relation_scope,
+            schema,
+        )
+        if column_errors:
+            errors.extend(column_errors)
+            blocked_reason = blocked_reason or column_errors[0]
 
-        column_policy_passed = not any(error.startswith("Unknown column:") for error in errors)
+        column_policy_passed = not column_errors
         checks.append(
             PolicyCheck(
                 name="known_columns",
                 passed=column_policy_passed,
-                message="Referenced columns are known where validation is feasible."
+                message="Referenced columns are known and unambiguous."
                 if column_policy_passed
-                else "One or more referenced columns are unknown.",
+                else "One or more referenced columns are unknown or ambiguous.",
                 severity="high" if not column_policy_passed else "low",
             )
         )
 
-        access_errors = _access_policy_errors(expression, tables, columns, self.config.access_policy)
+        star_tables = _star_tables(expression, relation_scope)
+        access_errors = _access_policy_errors(
+            column_refs,
+            star_tables,
+            schema,
+            self.config.access_policy,
+        )
         if access_errors:
             blocked_reason = blocked_reason or access_errors[0]
             errors.extend(access_errors)
@@ -232,7 +238,7 @@ class SQLValidator:
                 )
             )
 
-        has_select_star = any(isinstance(selected, exp.Star) for selected in expression.find_all(exp.Star))
+        has_select_star = bool(star_tables)
         if has_select_star and self.config.safety_policy.warn_on_select_star:
             warnings.append("SELECT * may expose more data than intended.")
             risk_level = _max_risk(risk_level, "medium")
@@ -375,6 +381,84 @@ def _normalize_identifier(identifier: str) -> str:
     return identifier.strip('"').split(".")[-1]
 
 
+@dataclass(frozen=True)
+class _RelationScope:
+    tables: tuple[str, ...]
+    aliases: dict[str, str]
+
+    def resolve_table(self, qualifier: str) -> str | None:
+        normalized = _normalize_identifier(qualifier).lower()
+        return self.aliases.get(normalized)
+
+
+def _relation_scope(expression: exp.Expression) -> _RelationScope:
+    tables: set[str] = set()
+    aliases: dict[str, str] = {}
+    for table in expression.find_all(exp.Table):
+        table_name = _normalize_identifier(table.name).lower()
+        alias_name = _normalize_identifier(table.alias_or_name).lower()
+        tables.add(table_name)
+        aliases[table_name] = table_name
+        aliases[alias_name] = table_name
+    return _RelationScope(tables=tuple(sorted(tables)), aliases=aliases)
+
+
+def _resolve_column_references(
+    expression: exp.Expression,
+    scope: _RelationScope,
+    schema: DatabaseSchema,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    references: list[tuple[str, str]] = []
+    errors: list[str] = []
+
+    for column in expression.find_all(exp.Column):
+        column_name = _normalize_identifier(column.name).lower()
+        if column_name == "*":
+            continue
+
+        if column.table:
+            table_name = scope.resolve_table(column.table)
+            if table_name is None:
+                errors.append(f"Unknown table qualifier: {column.table}")
+                continue
+            table = schema.get_table(table_name)
+            if table is not None and table.get_column(column_name) is None:
+                errors.append(f"Unknown column: {column_name}")
+                continue
+            references.append((table_name, column_name))
+            continue
+
+        candidates = [
+            table_name
+            for table_name in scope.tables
+            if (table := schema.get_table(table_name)) is not None
+            and table.get_column(column_name) is not None
+        ]
+        if len(candidates) == 1:
+            references.append((candidates[0], column_name))
+        elif not candidates:
+            errors.append(f"Unknown column: {column_name}")
+        else:
+            errors.append(f"Ambiguous column: {column_name}")
+
+    return references, list(dict.fromkeys(errors))
+
+
+def _star_tables(expression: exp.Expression, scope: _RelationScope) -> set[str]:
+    exposed_tables: set[str] = set()
+    for star in expression.find_all(exp.Star):
+        parent = star.parent
+        if isinstance(parent, exp.Func):
+            continue
+        if isinstance(parent, exp.Column) and parent.table:
+            table_name = scope.resolve_table(parent.table)
+            if table_name is not None:
+                exposed_tables.add(table_name)
+            continue
+        exposed_tables.update(scope.tables)
+    return exposed_tables
+
+
 def _lower_set(values: list[str]) -> set[str]:
     return {value.lower() for value in values}
 
@@ -433,15 +517,14 @@ def _highest_error_risk(checks: list[PolicyCheck]) -> str:
 
 
 def _access_policy_errors(
-    expression: exp.Expression,
-    tables: list[str],
-    columns: list[str],
+    column_refs: list[tuple[str, str]],
+    star_tables: set[str],
+    schema: DatabaseSchema,
     access_policy,
 ) -> list[str]:
     errors: list[str] = []
     blocked = _normalized_policy_map(access_policy.blocked_columns)
     allowed = _normalized_policy_map(access_policy.allowed_columns)
-    column_refs = _column_table_pairs(expression, tables, columns)
 
     for table_name, column_name in column_refs:
         blocked_columns = blocked.get(table_name, set())
@@ -453,26 +536,24 @@ def _access_policy_errors(
         if allowed_columns is not None and column_name not in allowed_columns:
             errors.append(f"Column is not allowed by access policy: {table_name}.{column_name}")
 
-    return errors
+    for table_name in sorted(star_tables):
+        blocked_columns = blocked.get(table_name, set())
+        if blocked_columns:
+            column_name = sorted(blocked_columns)[0]
+            errors.append(f"Column is blocked by access policy: {table_name}.{column_name}")
 
+        allowed_columns = allowed.get(table_name)
+        table = schema.get_table(table_name)
+        if allowed_columns is not None and table is not None:
+            exposed_columns = {column.name.lower() for column in table.columns}
+            disallowed_columns = sorted(exposed_columns - allowed_columns)
+            if disallowed_columns:
+                errors.append(
+                    "Column is not allowed by access policy: "
+                    f"{table_name}.{disallowed_columns[0]}"
+                )
 
-def _column_table_pairs(
-    expression: exp.Expression,
-    tables: list[str],
-    columns: list[str],
-) -> list[tuple[str, str]]:
-    if not columns:
-        return []
-    pairs: list[tuple[str, str]] = []
-    default_table = tables[0] if len(tables) == 1 else None
-    for column in expression.find_all(exp.Column):
-        if column.name == "*":
-            continue
-        table_name = _normalize_identifier(column.table) if column.table else default_table
-        if table_name is None:
-            continue
-        pairs.append((table_name, _normalize_identifier(column.name)))
-    return pairs
+    return list(dict.fromkeys(errors))
 
 
 def _normalized_policy_map(policy: dict[str, list[str]]) -> dict[str, set[str]]:

@@ -204,9 +204,7 @@ def test_repair_loop_invoked_when_generator_supports_it(fixture_db_url: str) -> 
     assert "count" in result.candidate_sql.lower()
 
 
-def test_execution_failed_when_candidate_sql_runtime_errors(fixture_db_url: str) -> None:
-    # Multi-table JOIN bypasses the validator's single-table column-existence check,
-    # so the bad column reference surfaces as a runtime DB error.
+def test_invalid_multitable_column_fails_validation(fixture_db_url: str) -> None:
     class _BadColumnGenerator:
         def generate(self, question, schema, max_rows):
             return GeneratedSQL(
@@ -221,7 +219,8 @@ def test_execution_failed_when_candidate_sql_runtime_errors(fixture_db_url: str)
     result = run_case(case, _factory(fixture_db_url, generator=_BadColumnGenerator()))
 
     assert result.passed is False
-    assert result.failure_category == FailureCategory.EXECUTION_FAILED
+    assert result.failure_category == FailureCategory.VALIDATION_FAILED
+    assert result.validation_errors == ["Unknown column: x_does_not_exist"]
 
 
 def test_unknown_error_when_gold_sql_is_invalid(fixture_db_url: str) -> None:
