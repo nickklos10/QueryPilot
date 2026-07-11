@@ -6,8 +6,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-11
+
 ### Added
 
+- `server.json` MCP-registry manifest at the repo root and an `mcp-name`
+  ownership marker in the README, preparing the official MCP registry
+  submission.
 - README hero image (`docs/assets/eval-report.svg`) — a self-contained SVG
   rendering of the `querypilot eval run` terminal report.
 - First-class [`examples/`](examples/) directory: offline quickstart, OpenAI
@@ -89,5 +94,6 @@ Initial public release. Foundation and eval-driven harness shipped.
 - Sample GitHub Actions workflow at `.github/workflows/eval.yml` running
   `eval run` + `eval check` on every PR.
 
-[Unreleased]: https://github.com/nickklos10/QueryPilot/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nickklos10/QueryPilot/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/nickklos10/QueryPilot/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/nickklos10/QueryPilot/releases/tag/v0.1.0

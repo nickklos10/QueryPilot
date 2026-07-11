@@ -1,5 +1,7 @@
 # QueryPilot
 
+<!-- mcp-name: io.github.nickklos10/querypilot -->
+
 [![PyPI](https://img.shields.io/pypi/v/querypilot.svg)](https://pypi.org/project/querypilot/)
 [![Python](https://img.shields.io/pypi/pyversions/querypilot.svg)](https://pypi.org/project/querypilot/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -391,6 +393,12 @@ Run QueryPilot as an MCP-compatible tool server:
 ```bash
 .venv/bin/pip install -e ".[mcp]"
 querypilot mcp --database-url sqlite:///demo.db --dialect sqlite
+```
+
+If your MCP client launches servers with `uvx`, include the `[mcp]` extra explicitly so the MCP SDK dependency is installed:
+
+```bash
+uvx --from 'querypilot[mcp]' querypilot mcp --database-url sqlite:///demo.db --dialect sqlite
 ```
 
 By default, the MCP command uses stdio transport. For clients that support Streamable HTTP:
