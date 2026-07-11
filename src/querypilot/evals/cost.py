@@ -129,6 +129,65 @@ class OpenAICostTracker:
         self._captured.clear()
 
 
+class LocalCostTracker:
+    """Cost tracker for OpenAI-compatible local endpoints (Ollama, vLLM, ...).
+
+    Wraps the Chat Completions surface to capture token usage when the server
+    reports it, but always reports ``$0`` — local inference is free, so a dollar
+    estimate would be noise (and would be *wrong* if the served model name
+    happened to collide with a hosted-pricing entry in ``MODEL_PRICING``).
+    """
+
+    def __init__(self) -> None:
+        self._captured: list[Any] = []
+        self._model: str | None = None
+        self._wrapped: tuple[Any, Any] | None = None  # (chat, original_completions)
+
+    def wrap(self, generator: Any) -> Any:
+        self._model = getattr(generator, "model", None)
+        client = getattr(generator, "client", None)
+        chat = getattr(client, "chat", None)
+        if chat is None or not hasattr(chat, "completions"):
+            return generator
+        original = _unwrap(chat.completions)
+        if isinstance(chat.completions, _ResponseCapture):
+            return generator  # already wrapped
+        chat.completions = _ResponseCapture(original, self._captured)
+        self._wrapped = (chat, original)
+        return generator
+
+    def restore(self) -> None:
+        if self._wrapped is None:
+            return
+        chat, original = self._wrapped
+        chat.completions = original
+        self._wrapped = None
+
+    def last_usage(self) -> TokenUsage | None:
+        if not self._captured:
+            return None
+        response = self._captured[-1]
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        prompt = _coerce_int(getattr(usage, "prompt_tokens", None))
+        completion = _coerce_int(getattr(usage, "completion_tokens", None))
+        if prompt is None and completion is None:
+            return None
+        prompt = prompt or 0
+        completion = completion or 0
+        return TokenUsage(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=prompt + completion,
+            model=self._model,
+            estimated_usd=0.0,  # local inference is free
+        )
+
+    def reset(self) -> None:
+        self._captured.clear()
+
+
 class AnthropicCostTracker:
     def __init__(self) -> None:
         self._captured: list[Any] = []

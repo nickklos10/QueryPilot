@@ -7,6 +7,7 @@ import pytest
 from querypilot.evals.cost import (
     MODEL_PRICING,
     AnthropicCostTracker,
+    LocalCostTracker,
     NullCostTracker,
     OpenAICostTracker,
     TokenUsage,
@@ -72,6 +73,123 @@ class _FakeAnthropicGenerator:
 
     def call_create(self) -> _FakeResponse:
         return self.client.messages.create(model=self.model)
+
+
+class _FakeChatUsage:
+    def __init__(
+        self, prompt_tokens: int | None = None, completion_tokens: int | None = None
+    ) -> None:
+        if prompt_tokens is not None:
+            self.prompt_tokens = prompt_tokens
+        if completion_tokens is not None:
+            self.completion_tokens = completion_tokens
+
+
+class _FakeChatCompletions:
+    def __init__(self, response: _FakeResponse) -> None:
+        self._response = response
+        self.calls: list[tuple] = []
+
+    def create(self, *args: Any, **kwargs: Any) -> _FakeResponse:
+        self.calls.append((args, kwargs))
+        return self._response
+
+
+class _FakeChat:
+    def __init__(self, response: _FakeResponse) -> None:
+        self.completions = _FakeChatCompletions(response)
+
+
+class _FakeLocalClient:
+    def __init__(self, response: _FakeResponse) -> None:
+        self.chat = _FakeChat(response)
+
+
+class _FakeLocalGenerator:
+    def __init__(self, model: str, response: _FakeResponse) -> None:
+        self.client = _FakeLocalClient(response)
+        self.model = model
+
+    def call_create(self) -> _FakeResponse:
+        return self.client.chat.completions.create(model=self.model)
+
+
+def test_local_tracker_extracts_usage_and_reports_zero_cost() -> None:
+    response = _FakeResponse(usage=_FakeChatUsage(prompt_tokens=200, completion_tokens=60))
+    generator = _FakeLocalGenerator(model="llama3.1", response=response)
+    tracker = LocalCostTracker()
+    tracker.wrap(generator)
+
+    generator.call_create()
+    usage = tracker.last_usage()
+
+    assert usage == TokenUsage(
+        prompt_tokens=200,
+        completion_tokens=60,
+        total_tokens=260,
+        model="llama3.1",
+        estimated_usd=0.0,
+    )
+
+
+def test_local_tracker_reports_zero_cost_even_on_pricing_collision() -> None:
+    # A local model named like a hosted one must still cost $0 (no MODEL_PRICING lookup).
+    response = _FakeResponse(usage=_FakeChatUsage(prompt_tokens=1000, completion_tokens=1000))
+    generator = _FakeLocalGenerator(model="gpt-4o", response=response)
+    tracker = LocalCostTracker()
+    tracker.wrap(generator)
+
+    generator.call_create()
+    usage = tracker.last_usage()
+
+    assert usage is not None
+    assert usage.estimated_usd == 0.0
+
+
+def test_local_tracker_returns_none_before_any_call() -> None:
+    response = _FakeResponse(usage=_FakeChatUsage(prompt_tokens=1, completion_tokens=1))
+    generator = _FakeLocalGenerator(model="llama3.1", response=response)
+    tracker = LocalCostTracker()
+    tracker.wrap(generator)
+
+    assert tracker.last_usage() is None
+
+
+def test_local_tracker_passes_through_when_response_has_no_usage() -> None:
+    response = _FakeResponse()
+    generator = _FakeLocalGenerator(model="llama3.1", response=response)
+    tracker = LocalCostTracker()
+    tracker.wrap(generator)
+
+    generator.call_create()
+
+    assert tracker.last_usage() is None
+
+
+def test_local_tracker_restore_returns_original_completions() -> None:
+    response = _FakeResponse(usage=_FakeChatUsage(prompt_tokens=1, completion_tokens=1))
+    generator = _FakeLocalGenerator(model="llama3.1", response=response)
+    original = generator.client.chat.completions
+    tracker = LocalCostTracker()
+
+    tracker.wrap(generator)
+    assert generator.client.chat.completions is not original
+
+    tracker.restore()
+    assert generator.client.chat.completions is original
+
+
+def test_local_tracker_returns_generator_when_chat_missing() -> None:
+    class _BareGen:
+        model = "llama3.1"
+
+    bare = _BareGen()
+    tracker = LocalCostTracker()
+
+    result = tracker.wrap(bare)
+
+    assert result is bare
+    assert tracker.last_usage() is None
 
 
 def test_null_cost_tracker_returns_none() -> None:
