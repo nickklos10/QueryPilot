@@ -1,21 +1,42 @@
 from __future__ import annotations
 
+import warnings
 from typing import Any, Protocol
 
 from pydantic import BaseModel
 
 
-# (input_per_1k_usd, output_per_1k_usd). Missing models leave estimated_usd unset.
+# Per-token API prices as (input_per_1k_usd, output_per_1k_usd).
+#
+# Verify against the source pages before editing — prices change and models get
+# delisted. Numbers no longer quoted on an official page are dropped rather than
+# kept on stale figures.
+#   OpenAI:    https://developers.openai.com/api/docs/pricing
+#   Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+# As of 2026-07-11. The official pages quote USD per 1M tokens; the values below
+# are per 1K (divide by 1000). Keys are model-id families; dated snapshots such
+# as "gpt-5.4-nano-2026-03-17" resolve to their family price via the
+# longest-prefix fallback in ``_resolve_pricing``. Models absent from the table
+# warn once and are costed at $0 (see ``estimate_usd``).
 MODEL_PRICING: dict[str, tuple[float, float]] = {
-    # OpenAI Responses API (illustrative; refresh as pricing changes)
-    "gpt-5.1": (0.01, 0.03),
-    "gpt-4o": (0.005, 0.015),
-    "gpt-4o-mini": (0.00015, 0.0006),
-    # Anthropic Messages API
-    "claude-opus-4-7": (0.015, 0.075),
+    # OpenAI — https://developers.openai.com/api/docs/pricing
+    "gpt-5.6-sol": (0.005, 0.030),
+    "gpt-5.6-terra": (0.0025, 0.015),
+    "gpt-5.6-luna": (0.001, 0.006),
+    "gpt-5.5-pro": (0.030, 0.180),
+    "gpt-5.5": (0.005, 0.030),
+    "gpt-5.4": (0.0025, 0.015),
+    "gpt-5.4-mini": (0.00075, 0.0045),
+    "gpt-5.4-nano": (0.0002, 0.00125),
+    # Anthropic — https://platform.claude.com/docs/en/about-claude/pricing
+    "claude-opus-4-8": (0.005, 0.025),
+    "claude-opus-4-7": (0.005, 0.025),
+    # Sonnet 5 introductory pricing through 2026-08-31; standard rate of
+    # (0.003, 0.015) takes effect 2026-09-01 — refresh this entry then.
+    "claude-sonnet-5": (0.002, 0.010),
     "claude-sonnet-4-6": (0.003, 0.015),
     "claude-sonnet-4-20250514": (0.003, 0.015),
-    "claude-haiku-4-5-20251001": (0.00025, 0.00125),
+    "claude-haiku-4-5": (0.001, 0.005),
 }
 
 
@@ -238,12 +259,57 @@ class AnthropicCostTracker:
         self._captured.clear()
 
 
+# Unknown-model names already warned about, so the warning fires once per model
+# rather than once per priced request.
+_WARNED_UNKNOWN_MODELS: set[str] = set()
+
+
+def _resolve_pricing(model: str) -> tuple[float, float] | None:
+    """Resolve a model id to ``(input_per_1k, output_per_1k)``.
+
+    Exact table entries win. Otherwise fall back to the longest family key that
+    ``model`` extends on a hyphen boundary, so dated snapshots like
+    ``gpt-5.4-nano-2026-03-17`` inherit their family price without a dedicated
+    entry. Matching on the boundary keeps ``gpt-5.4`` from swallowing a
+    hypothetical ``gpt-5.45``.
+    """
+    exact = MODEL_PRICING.get(model)
+    if exact is not None:
+        return exact
+    best: tuple[float, float] | None = None
+    best_len = -1
+    for key, price in MODEL_PRICING.items():
+        if model.startswith(f"{key}-") and len(key) > best_len:
+            best = price
+            best_len = len(key)
+    return best
+
+
+def _warn_unknown_model(model: str) -> None:
+    """Warn (once per model) that a model has no pricing entry.
+
+    A real eval run silently reported ``$0.0000`` for a model missing from
+    ``MODEL_PRICING``; the warning keeps cost-per-query honest while callers
+    still get a number back so reports don't crash. ``LocalCostTracker`` and
+    ``NullCostTracker`` never reach here — they report $0 by design.
+    """
+    if model in _WARNED_UNKNOWN_MODELS:
+        return
+    _WARNED_UNKNOWN_MODELS.add(model)
+    warnings.warn(
+        f"No pricing entry for model {model!r}; reporting $0.00 cost. "
+        f"Add it to MODEL_PRICING in querypilot.evals.cost for an accurate estimate.",
+        stacklevel=3,
+    )
+
+
 def estimate_usd(model: str | None, prompt_tokens: int, completion_tokens: int) -> float | None:
     if model is None:
         return None
-    pricing = MODEL_PRICING.get(model)
+    pricing = _resolve_pricing(model)
     if pricing is None:
-        return None
+        _warn_unknown_model(model)
+        return 0.0
     input_per_1k, output_per_1k = pricing
     return round(
         (prompt_tokens / 1000.0) * input_per_1k

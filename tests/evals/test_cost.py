@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+import querypilot.evals.cost as cost
 from querypilot.evals.cost import (
     MODEL_PRICING,
     AnthropicCostTracker,
@@ -13,6 +14,13 @@ from querypilot.evals.cost import (
     TokenUsage,
     estimate_usd,
 )
+
+
+@pytest.fixture(autouse=True)
+def _reset_unknown_model_warnings() -> None:
+    # estimate_usd warns once per unknown model for the life of the process;
+    # clear the dedup set so each test observes warnings independently.
+    cost._WARNED_UNKNOWN_MODELS.clear()
 
 
 class _FakeUsage:
@@ -132,10 +140,13 @@ def test_local_tracker_extracts_usage_and_reports_zero_cost() -> None:
     )
 
 
-def test_local_tracker_reports_zero_cost_even_on_pricing_collision() -> None:
-    # A local model named like a hosted one must still cost $0 (no MODEL_PRICING lookup).
+def test_local_tracker_reports_zero_cost_even_on_pricing_collision(
+    recwarn: pytest.WarningsRecorder,
+) -> None:
+    # A local model named like a hosted one must still cost $0 (no MODEL_PRICING
+    # lookup) and must not emit an unknown-model warning.
     response = _FakeResponse(usage=_FakeChatUsage(prompt_tokens=1000, completion_tokens=1000))
-    generator = _FakeLocalGenerator(model="gpt-4o", response=response)
+    generator = _FakeLocalGenerator(model="gpt-5.4", response=response)
     tracker = LocalCostTracker()
     tracker.wrap(generator)
 
@@ -144,6 +155,7 @@ def test_local_tracker_reports_zero_cost_even_on_pricing_collision() -> None:
 
     assert usage is not None
     assert usage.estimated_usd == 0.0
+    assert not [w for w in recwarn if "pricing entry" in str(w.message)]
 
 
 def test_local_tracker_returns_none_before_any_call() -> None:
@@ -208,8 +220,10 @@ def test_null_cost_tracker_wrap_returns_same_generator() -> None:
 
 
 def test_openai_tracker_extracts_usage_after_call() -> None:
-    response = _FakeResponse(usage=_FakeUsage(input_tokens=120, output_tokens=80))
-    generator = _FakeOpenAIGenerator(model="gpt-4o-mini", response=response)
+    # Token counts mirror the real gpt-5.4-nano run that reported $0 before the
+    # 2026 lineup was priced.
+    response = _FakeResponse(usage=_FakeUsage(input_tokens=841, output_tokens=263))
+    generator = _FakeOpenAIGenerator(model="gpt-5.4-nano", response=response)
     tracker = OpenAICostTracker()
     tracker.wrap(generator)
 
@@ -217,12 +231,13 @@ def test_openai_tracker_extracts_usage_after_call() -> None:
     usage = tracker.last_usage()
 
     assert usage == TokenUsage(
-        prompt_tokens=120,
-        completion_tokens=80,
-        total_tokens=200,
-        model="gpt-4o-mini",
-        estimated_usd=round(120 / 1000 * 0.00015 + 80 / 1000 * 0.0006, 6),
+        prompt_tokens=841,
+        completion_tokens=263,
+        total_tokens=1104,
+        model="gpt-5.4-nano",
+        estimated_usd=round(841 / 1000 * 0.0002 + 263 / 1000 * 0.00125, 6),
     )
+    assert usage.estimated_usd is not None and usage.estimated_usd > 0
 
 
 def test_openai_tracker_returns_none_before_any_call() -> None:
@@ -252,17 +267,19 @@ def test_openai_tracker_handles_unknown_model_with_no_pricing() -> None:
     tracker.wrap(generator)
 
     generator.call_create()
-    usage = tracker.last_usage()
+    with pytest.warns(UserWarning, match="custom-fine-tune"):
+        usage = tracker.last_usage()
 
     assert usage is not None
     assert usage.prompt_tokens == 10
     assert usage.completion_tokens == 5
-    assert usage.estimated_usd is None
+    # Token counts are still reported; the dollar figure falls back to $0 loudly.
+    assert usage.estimated_usd == 0.0
 
 
 def test_openai_tracker_reset_clears_history() -> None:
     response = _FakeResponse(usage=_FakeUsage(input_tokens=1, output_tokens=1))
-    generator = _FakeOpenAIGenerator(model="gpt-4o-mini", response=response)
+    generator = _FakeOpenAIGenerator(model="gpt-5.4-nano", response=response)
     tracker = OpenAICostTracker()
     tracker.wrap(generator)
 
@@ -293,7 +310,7 @@ def test_openai_tracker_keeps_only_last_response() -> None:
             self.client = _MultiClient(responses)
             self.model = model
 
-    generator = _MultiGen(model="gpt-4o-mini", responses=[first, second])
+    generator = _MultiGen(model="gpt-5.4-nano", responses=[first, second])
     tracker = OpenAICostTracker()
     tracker.wrap(generator)
 
@@ -335,12 +352,69 @@ def test_anthropic_tracker_returns_none_for_missing_usage() -> None:
     assert tracker.last_usage() is None
 
 
-def test_estimate_usd_returns_none_for_unknown_model() -> None:
-    assert estimate_usd("nonexistent-model", 1000, 500) is None
+def test_estimate_usd_warns_and_returns_zero_for_unknown_model() -> None:
+    with pytest.warns(UserWarning, match="nonexistent-model"):
+        cost_usd = estimate_usd("nonexistent-model", 1000, 500)
+
+    assert cost_usd == 0.0
+
+
+def test_estimate_usd_warns_once_per_unknown_model() -> None:
+    with pytest.warns(UserWarning) as records:
+        first = estimate_usd("mystery-model", 1000, 500)
+        second = estimate_usd("mystery-model", 999, 111)
+
+    assert first == 0.0
+    assert second == 0.0
+    assert len(records) == 1  # deduped by model name, not per call
 
 
 def test_estimate_usd_returns_none_when_model_is_none() -> None:
     assert estimate_usd(None, 1000, 500) is None
+
+
+def test_estimate_usd_openai_new_model_arithmetic() -> None:
+    # gpt-5.4-nano: $0.20 / $1.25 per 1M tokens -> 0.0002 / 0.00125 per 1K.
+    cost_usd = estimate_usd("gpt-5.4-nano", 841, 263)
+
+    assert cost_usd == round(841 / 1000 * 0.0002 + 263 / 1000 * 0.00125, 6)
+    assert cost_usd == pytest.approx(0.000497)
+
+
+def test_estimate_usd_anthropic_new_model_arithmetic() -> None:
+    # claude-opus-4-8: $5 / $25 per 1M tokens -> 0.005 / 0.025 per 1K.
+    cost_usd = estimate_usd("claude-opus-4-8", 2000, 500)
+
+    assert cost_usd == round(2000 / 1000 * 0.005 + 500 / 1000 * 0.025, 6)
+    assert cost_usd == pytest.approx(0.0225)
+
+
+def test_estimate_usd_resolves_dated_openai_snapshot_to_family() -> None:
+    dated = estimate_usd("gpt-5.4-nano-2026-03-17", 1000, 1000)
+    family = estimate_usd("gpt-5.4-nano", 1000, 1000)
+
+    assert dated is not None
+    assert dated == family
+    assert dated > 0
+
+
+def test_estimate_usd_resolves_dated_anthropic_snapshot_to_family() -> None:
+    dated = estimate_usd("claude-opus-4-8-20260528", 1000, 1000)
+    family = estimate_usd("claude-opus-4-8", 1000, 1000)
+
+    assert dated is not None
+    assert dated == family
+    assert dated > 0
+
+
+def test_estimate_usd_prefix_fallback_prefers_longest_family() -> None:
+    # A dated gpt-5.4-mini snapshot must resolve to gpt-5.4-mini, not gpt-5.4.
+    resolved = estimate_usd("gpt-5.4-mini-2026-01-01", 1000, 1000)
+    mini = estimate_usd("gpt-5.4-mini", 1000, 1000)
+    base = estimate_usd("gpt-5.4", 1000, 1000)
+
+    assert resolved == mini
+    assert resolved != base
 
 
 @pytest.mark.parametrize("model", list(MODEL_PRICING.keys()))
@@ -430,3 +504,27 @@ def test_anthropic_tracker_restore_returns_original_messages() -> None:
 def test_null_cost_tracker_has_restore() -> None:
     tracker = NullCostTracker()
     tracker.restore()  # must not raise
+
+
+def test_local_tracker_silent_for_unknown_model(recwarn: pytest.WarningsRecorder) -> None:
+    # Local inference is free by design and never consults MODEL_PRICING, so an
+    # unrecognized served model name must not trigger the unknown-model warning.
+    response = _FakeResponse(usage=_FakeChatUsage(prompt_tokens=500, completion_tokens=250))
+    generator = _FakeLocalGenerator(model="some-unlisted-local-model", response=response)
+    tracker = LocalCostTracker()
+    tracker.wrap(generator)
+
+    generator.call_create()
+    usage = tracker.last_usage()
+
+    assert usage is not None
+    assert usage.estimated_usd == 0.0
+    assert not [w for w in recwarn if "pricing entry" in str(w.message)]
+
+
+def test_null_cost_tracker_silent(recwarn: pytest.WarningsRecorder) -> None:
+    tracker = NullCostTracker()
+    tracker.wrap(object())
+
+    assert tracker.last_usage() is None
+    assert not [w for w in recwarn if "pricing entry" in str(w.message)]
