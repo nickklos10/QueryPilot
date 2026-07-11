@@ -18,6 +18,7 @@ from querypilot.evals.datasets import (
 from querypilot.evals.cost import (
     AnthropicCostTracker,
     CostTracker,
+    LocalCostTracker,
     NullCostTracker,
     OpenAICostTracker,
     TokenUsage,
@@ -70,6 +71,7 @@ __all__ = [
     "Leaderboard",
     "LeaderboardEntry",
     "LeaderboardError",
+    "LocalCostTracker",
     "NullCostTracker",
     "OpenAICostTracker",
     "RowsetMatch",

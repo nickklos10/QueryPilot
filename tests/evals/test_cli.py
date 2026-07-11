@@ -74,6 +74,87 @@ def test_eval_run_passes_with_demo_generator(
     assert payload["total_cases"] == 1
 
 
+def test_eval_run_openai_compatible_reads_base_url_from_env(
+    tmp_path: Path, fixture_db_path: Path, monkeypatch, capsys
+) -> None:
+    import querypilot.evals.factory as factory_mod
+    from querypilot.generation.sql_generator import DemoSQLGenerator
+
+    captured: dict = {}
+
+    def _spy(name, *, model=None, base_url=None):
+        captured["name"] = name
+        captured["model"] = model
+        captured["base_url"] = base_url
+        # Return an offline generator so the run completes without a network call.
+        return DemoSQLGenerator()
+
+    monkeypatch.setattr(factory_mod, "build_generator", _spy)
+    monkeypatch.setenv("QUERYPILOT_BASE_URL", "http://localhost:9999/v1")
+
+    suite = _smoke_suite(tmp_path, fixture_db_path)
+    report_path = tmp_path / "report.json"
+    exit_code = cli_main(
+        [
+            "eval",
+            "run",
+            "--suite",
+            str(suite),
+            "--database-url",
+            f"sqlite:///{fixture_db_path}",
+            "--generator",
+            "openai-compatible",
+            "--report",
+            str(report_path),
+            "--no-color",
+        ]
+    )
+
+    assert exit_code == 0
+    # --base-url is unset, so the value flows from $QUERYPILOT_BASE_URL.
+    assert captured["name"] == "openai-compatible"
+    assert captured["base_url"] == "http://localhost:9999/v1"
+    # The openai-compatible generator is paired with the zero-cost tracker.
+    payload = json.loads(report_path.read_text())
+    assert payload["estimated_cost_usd"] == 0.0
+
+
+def test_eval_run_openai_compatible_base_url_flag_overrides_env(
+    tmp_path: Path, fixture_db_path: Path, monkeypatch
+) -> None:
+    import querypilot.evals.factory as factory_mod
+    from querypilot.generation.sql_generator import DemoSQLGenerator
+
+    captured: dict = {}
+
+    def _spy(name, *, model=None, base_url=None):
+        captured["base_url"] = base_url
+        return DemoSQLGenerator()
+
+    monkeypatch.setattr(factory_mod, "build_generator", _spy)
+    monkeypatch.setenv("QUERYPILOT_BASE_URL", "http://localhost:9999/v1")
+
+    suite = _smoke_suite(tmp_path, fixture_db_path)
+    exit_code = cli_main(
+        [
+            "eval",
+            "run",
+            "--suite",
+            str(suite),
+            "--database-url",
+            f"sqlite:///{fixture_db_path}",
+            "--generator",
+            "openai-compatible",
+            "--base-url",
+            "http://localhost:1234/v1",
+            "--no-color",
+        ]
+    )
+
+    assert exit_code == 0
+    assert captured["base_url"] == "http://localhost:1234/v1"
+
+
 def test_eval_run_omitting_report_still_prints(
     tmp_path: Path, fixture_db_path: Path, capsys
 ) -> None:

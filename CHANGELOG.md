@@ -28,6 +28,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   SQL fails to execute (`--strict` to error instead). New
   `querypilot.evals.datasets` module with `import_dataset` / `detect_format` /
   `ImportResult` exports.
+- `OpenAICompatibleSQLGenerator` for OpenAI-compatible local endpoints (Ollama,
+  vLLM, LM Studio, llama.cpp). Reuses the `[openai]` extra (no new dependency),
+  talks the Chat Completions API, defaults to Ollama's
+  `http://localhost:11434/v1`, and treats the API key as optional. Wired into
+  the eval harness as `--generator openai-compatible` with a `--base-url` flag
+  (also `$QUERYPILOT_BASE_URL`), so the benchmark matrix can include open models
+  at $0.
+- `LocalCostTracker` — captures token usage from local endpoints when reported
+  but always estimates $0, so reports show real token counts without bogus
+  dollar figures. Paired automatically with the `openai-compatible` generator.
 
 ## [0.1.1] - 2026-07-11
 

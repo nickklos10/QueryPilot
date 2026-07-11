@@ -316,13 +316,22 @@ def _add_eval_run_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--generator",
         default="demo",
-        choices=("demo", "openai", "anthropic"),
+        choices=("demo", "openai", "anthropic", "openai-compatible"),
         help="SQL generator to evaluate. Use 'demo' for the offline deterministic generator.",
     )
     parser.add_argument(
         "--model",
         default=None,
-        help="Override the default model for openai/anthropic generators.",
+        help="Override the default model for openai/anthropic/openai-compatible generators.",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=os.getenv("QUERYPILOT_BASE_URL"),
+        help=(
+            "Base URL for the 'openai-compatible' generator (Ollama, vLLM, LM Studio, "
+            "llama.cpp). Defaults to $QUERYPILOT_BASE_URL, then Ollama's "
+            "http://localhost:11434/v1."
+        ),
     )
     parser.add_argument(
         "--report",
@@ -405,7 +414,7 @@ def _eval_run(args: argparse.Namespace) -> int:
             "--database-url is required when the suite does not declare fixture_db."
         )
 
-    generator = build_generator(args.generator, model=args.model)
+    generator = build_generator(args.generator, model=args.model, base_url=args.base_url)
     tracker_factory = build_cost_tracker_factory(args.generator)
     qp_factory = build_qp_factory(
         database_url=args.database_url or suite.fixture_db or "",
