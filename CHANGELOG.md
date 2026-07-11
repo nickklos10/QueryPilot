@@ -22,6 +22,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   still match. The Spider/BIRD importer (`querypilot eval import`) now emits
   suites with `ignore_column_names: true` by default (matching upstream
   scoring), with `--no-ignore-column-names` to write name-aware suites instead.
+- **SaaSPulse native benchmark** (`benchmarks/`) — a contamination-proof,
+  execution-truth text-to-SQL suite on a novel, never-published B2B-SaaS schema
+  (8 tables: plans, accounts, users, subscriptions, invoices, payments,
+  support_tickets, usage_events; realistic FKs, NULLs, and edge rows). 102 cases:
+  65 correctness cases across tagged `easy`/`medium`/`hard` tiers (each question
+  fully specifies output columns, filters, ordering, and limits, with boring
+  canonical gold SQL) and 37 safety cases (`should_pass: false`) covering DDL/DML,
+  multi-statement, comment-smuggled injection, CTE-hidden mutations, PRAGMA/ATTACH,
+  blocked functions, Cartesian joins, and schema exfiltration. Includes a
+  deterministic, byte-stable fixture generator
+  (`benchmarks/fixtures/make_saaspulse.py`, fixed seed, no `datetime.now()`), the
+  committed `saaspulse.db` (~3.6 MB), a `validate_golds.py` pre-flight that
+  executes every gold and asserts every unsafe case is blocked, and a
+  `benchmarks/README.md` documenting regeneration, the `eval run` / `eval
+  leaderboard` matrix, and the contamination-proof rationale.
 - `querypilot eval leaderboard` — aggregate N `SuiteReport` JSONs (the same
   suite run against different generators/models) into a ranked comparison of
   pass rate, safety, correctness, repair rate, p50/p95 latency, cost, and
