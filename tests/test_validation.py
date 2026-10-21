@@ -4,7 +4,7 @@ import pytest
 
 from querypilot import QueryPilot
 from querypilot.core.config import QueryPilotConfig, SafetyPolicy
-from querypilot.core.types import DatabaseSchema
+from querypilot.core.types import ColumnSchema, DatabaseSchema, TableSchema
 from querypilot.validation.validator import SQLValidator
 
 
@@ -199,6 +199,90 @@ def test_dangerous_postgres_functions_are_rejected(function_name: str) -> None:
 
     assert result.valid is False
     assert result.blocked_reason == f"SQL function is blocked by policy: {function_name}"
+
+
+def _schema_with_tables(dialect: str, *names: str) -> DatabaseSchema:
+    return DatabaseSchema(
+        dialect=dialect,
+        tables=[
+            TableSchema(name=name, columns=[ColumnSchema(name="id", type="INTEGER")])
+            for name in names
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM 'data.csv'",
+        "SELECT * FROM \"data.csv\"",
+        "SELECT p.id FROM 's3://bucket/x.parquet' AS p",
+        "SELECT * FROM 'https://example.com/x.json'",
+        "SELECT * FROM customers JOIN '/etc/passwd.csv' AS f ON f.id = customers.id",
+    ],
+)
+def test_file_and_url_table_references_are_rejected(sql: str) -> None:
+    # A schema table named like the file's extension must not let the read through.
+    validator = SQLValidator(QueryPilotConfig(dialect="duckdb"))
+    schema = _schema_with_tables("duckdb", "csv", "parquet", "json", "customers")
+
+    result = validator.validate(sql, schema)
+
+    assert result.valid is False
+    assert result.readonly is False
+    assert result.blocked_reason.startswith("Table reference looks like a file path or URL:")
+
+
+def test_schema_qualified_table_is_not_mistaken_for_a_path() -> None:
+    validator = SQLValidator(QueryPilotConfig(dialect="duckdb"))
+
+    result = validator.validate(
+        "SELECT id FROM main.customers", _schema_with_tables("duckdb", "customers")
+    )
+
+    assert result.valid is True
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id /*!50000 , SLEEP(5) */ FROM t",
+        "SELECT id FROM t /*!UNION SELECT password FROM users */",
+        "SELECT id /*M!100000 , SLEEP(5) */ FROM t",
+    ],
+)
+def test_mysql_executable_comments_are_rejected(sql: str) -> None:
+    validator = SQLValidator(QueryPilotConfig(dialect="mysql"))
+
+    result = validator.validate(sql, _schema_with_tables("mysql", "t"))
+
+    assert result.valid is False
+    assert result.blocked_reason == "Executable comments (/*! ... */) are not allowed."
+
+
+def test_ordinary_and_hint_comments_are_allowed() -> None:
+    validator = SQLValidator(QueryPilotConfig(dialect="mysql"))
+    schema = _schema_with_tables("mysql", "t")
+
+    assert validator.validate("SELECT id /* plain note */ FROM t", schema).valid is True
+    assert validator.validate("SELECT /*+ MAX_EXECUTION_TIME(1000) */ id FROM t", schema).valid
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM OPENROWSET(BULK 'C:\\secrets.txt', SINGLE_CLOB) AS x",
+        "SELECT * FROM OPENROWSET('SQLNCLI', 'Server=evil;', 'SELECT 1') AS x",
+        "SELECT * FROM OPENQUERY(linked, 'SELECT 1')",
+        "SELECT * FROM OPENDATASOURCE('SQLNCLI', 'Data Source=evil').db.dbo.t",
+    ],
+)
+def test_tsql_external_rowsets_are_rejected(sql: str) -> None:
+    validator = SQLValidator(QueryPilotConfig(dialect="tsql"))
+
+    result = validator.validate(sql, _schema_with_tables("tsql", "t", "x"))
+
+    assert result.valid is False
 
 
 def test_function_allowlist_fails_closed() -> None:

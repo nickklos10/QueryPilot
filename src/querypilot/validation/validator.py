@@ -159,6 +159,31 @@ class SQLValidator:
                 )
             )
 
+        source_error = _executable_comment_error(stripped, self.config.dialect) or (
+            _external_source_error(expression)
+        )
+        if source_error is not None:
+            readonly = False
+            errors.append(source_error)
+            blocked_reason = blocked_reason or source_error
+            risk_level = _max_risk(risk_level, "critical")
+            checks.append(
+                PolicyCheck(
+                    name="source_safety",
+                    passed=False,
+                    message=source_error,
+                    severity="critical",
+                )
+            )
+        else:
+            checks.append(
+                PolicyCheck(
+                    name="source_safety",
+                    passed=True,
+                    message="No executable comments or file and URL table references.",
+                )
+            )
+
         analysis = _QueryAnalysis()
         if is_query and non_readonly_operation is None:
             try:
@@ -390,6 +415,26 @@ def _function_policy_error(
             return f"SQL function is blocked by policy: {function_name}"
         if allowed is not None and function_name not in allowed:
             return f"SQL function is not allowed by policy: {function_name}"
+    return None
+
+
+def _executable_comment_error(sql: str, dialect: str) -> str | None:
+    # MySQL runs the body of /*! ... */ (MariaDB also /*M! ... */) as SQL, so
+    # anything hidden there escapes validation.
+    for token in sqlglot.tokenize(sql, read=dialect):
+        for comment in token.comments:
+            if comment.startswith(("!", "M!")):
+                return "Executable comments (/*! ... */) are not allowed."
+    return None
+
+
+def _external_source_error(expression: exp.Expression) -> str | None:
+    # DuckDB reads `FROM 'data.csv'` or `FROM 's3://b/x.parquet'` as a file or URL
+    # (a replacement scan), so a table name that looks like a path is not a table.
+    for table in expression.find_all(exp.Table):
+        for part in table.parts:
+            if isinstance(part, exp.Identifier) and any(char in part.name for char in "./\\:"):
+                return f"Table reference looks like a file path or URL: {part.name}"
     return None
 
 
