@@ -8,7 +8,12 @@ from querypilot.access import AccessPolicy
 from querypilot.access.policy import MASK_STRENGTH
 from querypilot.adapters.anthropic import anthropic_tools
 from querypilot.adapters.openai import openai_tools
-from querypilot.audit import AuditMetadata, AuditSink, InMemoryAuditSink, QueryAuditRecord
+from querypilot.audit import (
+    AuditMetadata,
+    AuditSink,
+    InMemoryAuditSink,
+    QueryAuditRecord,
+)
 from querypilot.connectors.base import BaseConnector
 from querypilot.connectors.postgres import PostgresConnector
 from querypilot.connectors.sqlite import SQLiteConnector
@@ -60,7 +65,7 @@ class QueryPilot:
         generator: SQLGenerator | None = None,
         audit_sink: AuditSink | None = None,
         audit_metadata: AuditMetadata | None = None,
-    ) -> "QueryPilot":
+    ) -> QueryPilot:
         config = QueryPilotConfig(
             dialect=dialect,
             readonly=readonly,
@@ -229,7 +234,7 @@ class QueryPilot:
     def get_audit_records(self, limit: int = 100) -> list[QueryAuditRecord]:
         return self.audit_sink.recent(limit)
 
-    def with_audit_metadata(self, metadata: AuditMetadata | None) -> "QueryPilot":
+    def with_audit_metadata(self, metadata: AuditMetadata | None) -> QueryPilot:
         return QueryPilot(
             connector=self.connector,
             config=self.config,

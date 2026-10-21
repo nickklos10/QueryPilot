@@ -4,7 +4,6 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-
 from querypilot.evals import (
     CaseResult,
     StageTimings,

@@ -7,13 +7,11 @@ from querypilot.evals.check import (
     load_report,
     write_outcome,
 )
-from querypilot.evals.compare import RowsetMatch, ValueMismatch, compare_rows, has_order_by
-from querypilot.evals.datasets import (
-    DatasetFormat,
-    DatasetImportError,
-    ImportResult,
-    detect_format,
-    import_dataset,
+from querypilot.evals.compare import (
+    RowsetMatch,
+    ValueMismatch,
+    compare_rows,
+    has_order_by,
 )
 from querypilot.evals.cost import (
     AnthropicCostTracker,
@@ -22,6 +20,13 @@ from querypilot.evals.cost import (
     NullCostTracker,
     OpenAICostTracker,
     TokenUsage,
+)
+from querypilot.evals.datasets import (
+    DatasetFormat,
+    DatasetImportError,
+    ImportResult,
+    detect_format,
+    import_dataset,
 )
 from querypilot.evals.factory import (
     build_cost_tracker_factory,
@@ -37,14 +42,19 @@ from querypilot.evals.leaderboard import (
     default_label,
     load_leaderboard,
 )
-from querypilot.evals.loader import SuiteLoadError, load_suite, load_suite_dir, write_suite
-from querypilot.evals.replay import replay_from_jsonl, replay_from_sink
+from querypilot.evals.loader import (
+    SuiteLoadError,
+    load_suite,
+    load_suite_dir,
+    write_suite,
+)
 from querypilot.evals.pipeline import (
     CaseResult,
     FailureCategory,
     StageTimings,
     run_case,
 )
+from querypilot.evals.replay import replay_from_jsonl, replay_from_sink
 from querypilot.evals.report import render_terminal, write_json
 from querypilot.evals.suite import (
     BenchmarkCase,

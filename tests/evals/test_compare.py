@@ -5,7 +5,13 @@ from decimal import Decimal
 
 import pytest
 
-from querypilot.evals.compare import NAN, RowsetMatch, ValueMismatch, compare_rows, has_order_by
+from querypilot.evals.compare import (
+    NAN,
+    RowsetMatch,
+    ValueMismatch,
+    compare_rows,
+    has_order_by,
+)
 from querypilot.evals.loader import load_suite, write_suite
 from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite, ComparisonConfig
 

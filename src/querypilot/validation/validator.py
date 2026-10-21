@@ -785,7 +785,7 @@ def _access_policy_errors(
     for table_name in sorted(star_tables):
         blocked_columns = blocked.get(table_name, set())
         if blocked_columns:
-            column_name = sorted(blocked_columns)[0]
+            column_name = min(blocked_columns)
             errors.append(f"Column is blocked by access policy: {table_name}.{column_name}")
 
         allowed_columns = allowed.get(table_name)

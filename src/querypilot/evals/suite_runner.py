@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import statistics
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
-from typing import Callable
 
 from pydantic import BaseModel, Field
 

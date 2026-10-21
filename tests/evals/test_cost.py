@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-import querypilot.evals.cost as cost
+from querypilot.evals import cost
 from querypilot.evals.cost import (
     MODEL_PRICING,
     AnthropicCostTracker,
@@ -360,7 +360,7 @@ def test_estimate_usd_warns_and_returns_zero_for_unknown_model() -> None:
 
 
 def test_estimate_usd_warns_once_per_unknown_model() -> None:
-    with pytest.warns(UserWarning) as records:
+    with pytest.warns(UserWarning) as records:  # noqa: PT031 - one block proves dedup
         first = estimate_usd("mystery-model", 1000, 500)
         second = estimate_usd("mystery-model", 999, 111)
 

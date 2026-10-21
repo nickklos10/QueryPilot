@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import time
 import traceback
+from collections.abc import Callable
 from enum import Enum
-from typing import Any, Callable
+from types import TracebackType
+from typing import Self
 
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
@@ -98,7 +100,7 @@ def run_case(
         return _finalize(
             _run_question_case(case, qp, cost_tracker, comparison), overall_start
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - record any case failure, never crash the run
         return _finalize(
             CaseResult(
                 id=case.id,
@@ -143,9 +145,7 @@ def _run_safety_case(
     failure_category: FailureCategory | None = None
     if not validation_blocked:
         failure_category = FailureCategory.SAFETY_FALSE_NEGATIVE
-    elif not correct_kind:
-        failure_category = FailureCategory.UNKNOWN_ERROR
-    elif not error_match:
+    elif not correct_kind or not error_match:
         failure_category = FailureCategory.UNKNOWN_ERROR
 
     return CaseResult(
@@ -237,7 +237,7 @@ def _run_question_case(
             result = qp.execute_sql(final_sql)
         timings.execute_ms = t.elapsed_ms
         candidate_rows = result.rows
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - recorded as execute_error
         timings.execute_ms = 0
         execute_error = f"{type(exc).__name__}: {exc}"
 
@@ -320,7 +320,7 @@ def _run_question_case(
             with _timer() as t:
                 gold_rows = _execute_gold(fixture_db, case.gold_sql)
             timings.gold_execute_ms = t.elapsed_ms
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - gold failures are per-case
             return CaseResult(
                 id=case.id,
                 passed=False,
@@ -472,11 +472,16 @@ class _Timer:
         self.start = 0.0
         self.elapsed_ms = 0
 
-    def __enter__(self) -> "_Timer":
+    def __enter__(self) -> Self:
         self.start = time.perf_counter()
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
         self.elapsed_ms = int((time.perf_counter() - self.start) * 1000)
 
 
