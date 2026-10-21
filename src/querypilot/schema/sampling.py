@@ -40,6 +40,9 @@ SCAN_ROWS = 10_000
 MAX_VALUE_CHARS = 40
 # More distinct values than this in the scan means free text or identifiers, not categories.
 MAX_DISTINCT_VALUES = 50
+# Columns with at most this many distinct values show all of them, not just the top few:
+# a partial list ("e.g. 'normal', 'low', 'high'") misleads a model asked about "urgent".
+ENUM_MAX_VALUES = 10
 
 _TEXT_TYPES = ("CHAR", "TEXT", "STRING", "CLOB", "ENUM", "CITEXT", "NAME")
 _NON_TEXT_TYPES = ("UUID", "JSON", "XML", "BINARY", "BLOB", "BYTEA")
@@ -117,7 +120,7 @@ def sample_token_allowance(table: TableSchema, sample_values: int) -> int:
         and not is_identifier_like(table, column)
         and not is_sensitive_name(column.name)
     )
-    return text_columns * (2 + 4 * sample_values)
+    return text_columns * (2 + 4 * max(sample_values, ENUM_MAX_VALUES // 2))
 
 
 def table_can_be_sampled(table_name: str, config: QueryPilotConfig) -> bool:
@@ -240,7 +243,7 @@ def fetch_table_samples(
             text = _format_value(value)
             if text and text not in values:
                 values.append(text)
-        samples[column.name.lower()] = values[: config.sample_values]
+        samples[column.name.lower()] = values
     return samples
 
 
@@ -279,7 +282,7 @@ def cached_samples(
             for column in missing:
                 cache[(table_key, column.name.lower())] = fetched.get(column.name.lower(), [])
     return {
-        column.name.lower(): cache[(table_key, column.name.lower())][: config.sample_values]
+        column.name.lower(): cache[(table_key, column.name.lower())]
         for column in wanted
         if cache.get((table_key, column.name.lower()))
     }
@@ -293,12 +296,24 @@ def clear_sample_cache(connector: BaseConnector | None = None) -> None:
             _CACHE.pop(connector, None)
 
 
-def apply_samples(table: TableSchema, samples: dict[str, list[str]]) -> TableSchema:
-    """Copy of ``table`` with ``sample_values`` filled from ``samples``."""
-    columns = [
-        column.model_copy(update={"sample_values": list(samples.get(column.name.lower(), []))})
-        for column in table.columns
-    ]
+def apply_samples(
+    table: TableSchema, samples: dict[str, list[str]], limit: int | None = None
+) -> TableSchema:
+    """Copy of ``table`` with ``sample_values`` filled from ``samples``.
+
+    ``samples`` hold every distinct value fetched for a column (most frequent
+    first). Columns with at most ``ENUM_MAX_VALUES`` values keep all of them and
+    are marked complete; others keep the first ``limit``.
+    """
+    columns = []
+    for column in table.columns:
+        values = list(samples.get(column.name.lower(), []))
+        complete = bool(values) and len(values) <= ENUM_MAX_VALUES
+        if not complete and limit is not None:
+            values = values[:limit]
+        columns.append(
+            column.model_copy(update={"sample_values": values, "sample_values_complete": complete})
+        )
     return table.model_copy(update={"columns": columns})
 
 

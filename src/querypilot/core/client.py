@@ -211,7 +211,7 @@ class QueryPilot:
         if self.config.sample_values <= 0:
             return table.model_copy(deep=True)
         samples = cached_samples(self.connector, table, self.config.dialect, self.config)
-        return apply_samples(table, samples)
+        return apply_samples(table, samples, limit=self.config.sample_values)
 
     def search_schema(self, query: str) -> list[SchemaMatch]:
         """Tables (and their matching columns) relevant to ``query``, within the visible schema."""

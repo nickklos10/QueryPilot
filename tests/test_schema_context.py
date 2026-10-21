@@ -485,3 +485,21 @@ def test_pruning_keeps_join_partner_named_only_indirectly() -> None:
     kept = {table.name for table in pruned.tables}
     assert {"invoices", "accounts"} <= kept
     assert len(kept) < len(schema.tables)
+
+
+def test_small_enums_list_every_value_including_rare_ones(tmp_path: Path) -> None:
+    path = tmp_path / "tickets.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE tickets (id INTEGER PRIMARY KEY, priority TEXT, body TEXT)")
+    rows = [("normal",)] * 40 + [("low",)] * 30 + [("high",)] * 20 + [("urgent",)] * 2
+    conn.executemany("INSERT INTO tickets (priority) VALUES (?)", rows)
+    conn.commit()
+    conn.close()
+    qp = QueryPilot.connect(f"sqlite:///{path}", sample_values=3)
+
+    column = qp.schema_for_prompt("urgent tickets").get_table("tickets").get_column("priority")
+
+    assert column.sample_values_complete
+    assert set(column.sample_values) == {"normal", "low", "high", "urgent"}
+    prompt = build_sql_generation_prompt("urgent tickets", qp.schema_for_prompt("urgent tickets"), 10)
+    assert "one of 'normal', 'low', 'high', 'urgent'" in prompt.user_prompt

@@ -69,7 +69,7 @@ def build_sql_generation_prompt(
         "SQL comments or vendor-specific admin commands. "
         "Use only the tables and columns listed in the schema, and join tables on the "
         "listed foreign keys. When the question names a value, match the stored "
-        "spelling shown in the e.g. samples. Follow the business rules when given. "
+        "spelling shown in the 'one of' / 'e.g.' values. Follow the business rules when given. "
         f"The maximum row limit is {max_rows}; include a LIMIT no larger than that "
         "unless the query is an aggregate that returns one row. "
         'Return only JSON: {"sql": "<the SQL, nothing else>", "explanation": '
@@ -150,7 +150,8 @@ def _column_note(column: ColumnSchema) -> str:
     if column.comment:
         notes.append(_one_line(column.comment))
     if column.sample_values:
-        notes.append("e.g. " + ", ".join(_quote_value(value) for value in column.sample_values))
+        label = "one of" if column.sample_values_complete else "e.g."
+        notes.append(f"{label} " + ", ".join(_quote_value(value) for value in column.sample_values))
     return f" -- {'; '.join(notes)}" if notes else ""
 
 

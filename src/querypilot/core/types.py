@@ -11,6 +11,8 @@ class ColumnSchema(BaseModel):
     comment: str | None = None
     # A few distinct stored values, shown to the model so it filters on real literals.
     sample_values: list[str] = Field(default_factory=list)
+    # True when sample_values lists every value the column holds (a small enum).
+    sample_values_complete: bool = False
 
 
 class ForeignKey(BaseModel):

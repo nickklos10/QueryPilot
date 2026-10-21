@@ -688,6 +688,8 @@ def _describe_column(column: ColumnSchema, mask_mode: str | None, max_chars: int
         entry["sample_values"] = [
             _truncate(str(value), min(max_chars, 100)) for value in column.sample_values
         ]
+        if column.sample_values_complete:
+            entry["all_values"] = True
     return entry
 
 
