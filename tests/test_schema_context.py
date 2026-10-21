@@ -448,3 +448,40 @@ def test_prompt_renders_keys_comments_samples_and_hints() -> None:
     assert "Write a single PostgreSQL SELECT" in prompt.instructions
     assert "Put no prose or markdown in the sql value" in prompt.instructions
     assert "maximum row limit is 50" in prompt.instructions
+
+
+def test_pruning_keeps_join_partner_named_only_indirectly() -> None:
+    # "customer segment" never names `accounts`, but invoices references it; dozens of
+    # unrelated tables that merely share a `segment` column must not crowd it out.
+    accounts = TableSchema(
+        name="accounts",
+        columns=[
+            ColumnSchema(name="account_id", type="INTEGER", primary_key=True),
+            ColumnSchema(name="segment", type="TEXT"),
+        ],
+    )
+    invoices = TableSchema(
+        name="invoices",
+        columns=[
+            ColumnSchema(name="invoice_id", type="INTEGER", primary_key=True),
+            ColumnSchema(name="account_id", type="INTEGER"),
+            ColumnSchema(name="amount_cents", type="INTEGER"),
+        ],
+        foreign_keys=[
+            ForeignKey(columns=["account_id"], referred_table="accounts", referred_columns=["account_id"])
+        ],
+    )
+    distractors = [
+        TableSchema(
+            name=f"marketing_records_{index}",
+            columns=[ColumnSchema(name="segment", type="TEXT"), ColumnSchema(name="amount_cents", type="INTEGER")],
+        )
+        for index in range(60)
+    ]
+    schema = DatabaseSchema(dialect="sqlite", tables=[*distractors, invoices, accounts])
+
+    pruned = prune_schema(schema, "Total invoiced amount per customer segment", token_budget=300)
+
+    kept = {table.name for table in pruned.tables}
+    assert {"invoices", "accounts"} <= kept
+    assert len(kept) < len(schema.tables)

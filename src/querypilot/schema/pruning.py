@@ -99,9 +99,9 @@ def prune_schema(
 ) -> DatabaseSchema:
     """Keep the whole schema if it fits ``token_budget``; otherwise the relevant part.
 
-    Tables are ranked by keyword relevance to the question (then by being a
-    foreign-key neighbour of a relevant table, then by schema order) and added
-    while they fit the budget; the top-ranked table is always kept. Tables on
+    Tables are ranked by keyword relevance to the question, where a foreign-key
+    neighbour of a relevant table inherits most of its score (then by schema
+    order), and added while they fit the budget; the top-ranked table is always kept. Tables on
     the shortest foreign-key path between any two relevant tables are then
     added even past the budget, so every kept table stays joinable. A budget
     of 0 or less disables pruning. ``sample_values`` reserves room for the
@@ -120,16 +120,10 @@ def prune_schema(
     scores = table_scores(schema, question)
     order = {table.name.lower(): index for index, table in enumerate(schema.tables)}
     matched = sorted(scores, key=lambda name: (-scores[name], order[name]))
-    neighbours = {
-        neighbour
-        for name in matched
-        for neighbour in graph.get(name, ())
-        if neighbour not in scores
-    }
+    relevance = _relevance(scores, graph)
 
-    def rank(name: str) -> tuple[int, int, int]:
-        tier = 0 if name in scores else 1 if name in neighbours else 2
-        return (tier, -scores.get(name, 0), order[name])
+    def rank(name: str) -> tuple[float, int]:
+        return (-relevance.get(name, 0.0), order[name])
 
     chosen: list[str] = []
     used = 0
@@ -149,6 +143,25 @@ def prune_schema(
     return schema.model_copy(
         update={"tables": [t for t in schema.tables if t.name.lower() in chosen_set]}
     )
+
+
+def _relevance(scores: dict[str, int], graph: dict[str, set[str]]) -> dict[str, float]:
+    """Keyword score, plus credit for being a join partner of a relevant table.
+
+    A question about "revenue per customer segment" names invoices but describes
+    accounts only indirectly; the foreign key from invoices to accounts is the
+    evidence that accounts belongs in the prompt. Tables in the foreign-key graph
+    also get a small boost over isolated tables that merely share a column name.
+    """
+    relevance: dict[str, float] = {}
+    for name, neighbours in graph.items():
+        inherited = max((scores[other] for other in neighbours if other in scores), default=0)
+        value = max(float(scores.get(name, 0)), 0.75 * inherited)
+        if value and neighbours:
+            value += 0.5
+        if value:
+            relevance[name] = value
+    return relevance
 
 
 def foreign_key_graph(schema: DatabaseSchema) -> dict[str, set[str]]:

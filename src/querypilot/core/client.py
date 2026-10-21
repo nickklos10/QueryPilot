@@ -49,6 +49,8 @@ from querypilot.validation.feedback import (
 )
 from querypilot.validation.validator import SQLValidator
 
+# How much larger the schema context gets when the model cannot answer from a pruned one.
+_EXPANDED_BUDGET_FACTOR = 4
 
 class QueryPilot:
     def __init__(
@@ -185,7 +187,7 @@ class QueryPilot:
         tables = [schema.get_table(name) for name in table_names]
         return [self._with_samples(table) for table in tables if table is not None]
 
-    def schema_for_prompt(self, question: str) -> DatabaseSchema:
+    def schema_for_prompt(self, question: str, *, token_budget: int | None = None) -> DatabaseSchema:
         """Return the schema context sent to the generator for this question.
 
         The access-policy-visible schema, pruned to the tables relevant to the
@@ -195,7 +197,7 @@ class QueryPilot:
         pruned = prune_schema(
             self.visible_schema(),
             question,
-            self.config.schema_token_budget,
+            self.config.schema_token_budget if token_budget is None else token_budget,
             sample_values=self.config.sample_values,
         )
         return pruned.model_copy(
@@ -360,6 +362,19 @@ class QueryPilot:
         empty_fallback: tuple[GeneratedSQL, ValidationResult, QueryResult] | None = None
 
         while True:
+            if generated.sql is None and attempts < max_attempts and self._schema_was_pruned(context):
+                # The model could not answer from the pruned schema (often a table the
+                # question names only indirectly): retry once with a much larger context.
+                context = self.schema_for_prompt(
+                    question, token_budget=self.config.schema_token_budget * _EXPANDED_BUDGET_FACTOR
+                )
+                started = time.perf_counter()
+                generated = self.generate_sql(question, schema=context)
+                run.generate_ms += _elapsed_ms(started)
+                run.generated = generated
+                run.repair_attempts += 1
+                attempts += 1
+                continue
             if generated.sql is None:
                 details = "; ".join(clean_error(e) for e in generated.errors) or "no SQL was returned"
                 if run.failure is None:
@@ -435,6 +450,9 @@ class QueryPilot:
         if empty_fallback is not None:
             run.succeed(*empty_fallback)
         return run
+
+    def _schema_was_pruned(self, context: DatabaseSchema) -> bool:
+        return len(context.tables) < len(self.visible_schema().tables)
 
     def _execute_validated(self, validation: ValidationResult) -> QueryResult:
         assert validation.rewritten_sql is not None

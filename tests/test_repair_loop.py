@@ -270,3 +270,24 @@ def test_ask_errors_do_not_name_hidden_columns(demo_db_url: str) -> None:
         "revenue" not in line for _, validation in generator.repairs for line in validation.errors
     )
     assert "customers.revenue" in (qp.get_audit_records(1)[0].error or "")
+
+
+def test_generation_failure_on_pruned_schema_retries_with_more_context(tmp_path) -> None:
+    import sqlite3
+
+    path = tmp_path / "wide.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, segment TEXT)")
+    conn.execute("INSERT INTO customers VALUES (1, 'smb')")
+    for index in range(40):
+        conn.execute(f"CREATE TABLE other_{index} (id INTEGER PRIMARY KEY, note_{index} TEXT, value_{index} REAL)")
+    conn.commit()
+    conn.close()
+    generator = ScriptedGenerator(None, "SELECT segment FROM customers")
+    qp = QueryPilot.connect(f"sqlite:///{path}", generator=generator, schema_token_budget=120, sample_values=0)
+
+    answer = qp.ask("which segments exist")
+
+    assert answer.rows == [{"segment": "smb"}]
+    first, second = generator.schemas
+    assert len(second.tables) > len(first.tables)
