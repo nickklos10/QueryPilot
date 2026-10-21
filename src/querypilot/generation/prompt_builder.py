@@ -65,6 +65,8 @@ def build_sql_generation_prompt(
     instructions = (
         f"You write {dialect} SQL for QueryPilot. Write a single {dialect} SELECT "
         "statement (a WITH ... SELECT is fine) that answers the question. "
+        "Select exactly the columns the question asks for, in the order it asks for them: "
+        "no extra ID, name or helper columns. "
         "Generate SELECT-only SQL: no INSERT/UPDATE/DELETE, DDL, multiple statements, "
         "SQL comments or vendor-specific admin commands. "
         "Use only the tables and columns listed in the schema, and join tables on the "

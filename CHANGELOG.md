@@ -47,6 +47,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   salaries, notes, descriptions, ...), or from columns with more than 50
   distinct values in the scan or no repeated value. Above `schema_token_budget`, only relevant
   tables are sent, plus the FK bridge tables between them.
+- **Exact-columns prompt rule.** The prompt asks for exactly the columns the
+  question names, in that order. On a 220-question BIRD dev sample (Claude Haiku),
+  QueryPilot's accuracy goes from 42.5% to 57.0% with this PR; see
+  `benchmarks/results/2026-10-20-agent-dx.md`.
 - **Repair that converges.** Validation errors carry "did you mean"
   suggestions; database errors are cleaned and fed back; an empty result gets
   one gentle review. `ask()` and the eval pipeline share one loop, and the

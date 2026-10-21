@@ -160,6 +160,8 @@ def test_prompt_builder_scopes_schema_and_safety_rules(demo_db_url: str) -> None
     assert "Return only JSON" in prompt.instructions
     assert "SELECT-only" in prompt.instructions
     assert "maximum row limit is 25" in prompt.instructions
+    # Extra columns were the largest failure class on BIRD (about half of misses).
+    assert "Select exactly the columns the question asks for" in prompt.instructions
 
 
 def test_openai_generator_uses_responses_api_and_extracts_json(demo_db_url: str) -> None:

@@ -6,6 +6,11 @@ the signed-in Claude subscription. PYTHONPATH selects the tree being measured.
     PYTHONPATH=<tree>/src python benchmarks/run_with_claude_cli.py <tree> report.json \
         [--suite benchmarks/saaspulse_natural/natural.yaml] [--model haiku] [--workers 6]
 
+For per-database suites from `querypilot eval import` (Spider/BIRD), pass the
+output directory with --each; every suite runs on its own fixture and the
+pass rate is aggregated. Raise --max-rows so the LIMIT cap never truncates a
+result the gold query returns in full.
+
 Each call runs `claude -p` from an empty directory with no tools, settings,
 hooks or MCP servers, so only QueryPilot's system and user prompts reach the model.
 """
@@ -67,6 +72,9 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--attempts", type=int, default=None)
     parser.add_argument("--suite", default=None)
+    parser.add_argument("--each", action="store_true", help="Run every *.yaml in --suite separately.")
+    parser.add_argument("--max-rows", type=int, default=None)
+    parser.add_argument("--timeout-seconds", type=int, default=None)
     args = parser.parse_args()
 
     import querypilot
@@ -77,18 +85,41 @@ def main() -> int:
 
     print("querypilot from", Path(querypilot.__file__).parent, file=sys.stderr)
     tree = Path(args.tree)
-    suite = load_suite_or_dir(args.suite or tree / "benchmarks/saaspulse/correctness.yaml")
     generator = AnthropicSQLGenerator(client=SimpleNamespace(messages=ClaudeCLIMessages()), model=args.model)
-    factory_kwargs = {"database_url": suite.fixture_db or "", "generator": generator}
-    if args.attempts is not None:
-        factory_kwargs["max_generation_attempts"] = args.attempts
-    report = run_suite(
-        suite,
-        qp_factory=build_qp_factory(**factory_kwargs),
-        max_workers=args.workers,
-        generator_name="anthropic (claude CLI)",
-        model_name=args.model,
-    )
+
+    def run(suite):
+        factory_kwargs = {"database_url": suite.fixture_db or "", "generator": generator}
+        for key, value in (
+            ("max_generation_attempts", args.attempts),
+            ("max_rows", args.max_rows),
+            ("timeout_seconds", args.timeout_seconds),
+        ):
+            if value is not None:
+                factory_kwargs[key] = value
+        return run_suite(
+            suite,
+            qp_factory=build_qp_factory(**factory_kwargs),
+            max_workers=args.workers,
+            generator_name="anthropic (claude CLI)",
+            model_name=args.model,
+        )
+
+    if args.each:
+        from querypilot.evals.loader import load_suite
+
+        cases = []
+        for path in sorted(Path(args.suite).glob("*.yaml")):
+            data = json.loads(run(load_suite(path)).model_dump_json())
+            passed = sum(case["passed"] for case in data["case_results"])
+            print(f"{path.stem}: {passed}/{len(data['case_results'])}", file=sys.stderr, flush=True)
+            cases.extend({**case, "suite": path.stem} for case in data["case_results"])
+        Path(args.report).write_text(json.dumps({"case_results": cases}, default=str))
+        passed = sum(case["passed"] for case in cases)
+        print(json.dumps({"passed": passed, "total": len(cases), "rate": passed / len(cases),
+                          "llm_calls": ClaudeCLIMessages.calls}, indent=2))
+        return 0
+
+    report = run(load_suite_or_dir(args.suite or tree / "benchmarks/saaspulse/correctness.yaml"))
     write_json(report, args.report)
     data = json.loads(Path(args.report).read_text())
     summary = {key: data.get(key) for key in (
