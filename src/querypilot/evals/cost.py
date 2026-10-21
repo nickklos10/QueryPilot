@@ -5,7 +5,6 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-
 # Per-token API prices as (input_per_1k_usd, output_per_1k_usd).
 #
 # Verify against the source pages before editing — prices change and models get

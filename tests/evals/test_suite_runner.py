@@ -16,7 +16,6 @@ from querypilot.evals import (
     run_suite,
 )
 
-
 FIXTURE_DB = Path(__file__).resolve().parents[1] / "fixtures" / "demo.db"
 
 

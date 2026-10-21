@@ -41,7 +41,7 @@ class QueryAuditRecord(BaseModel):
         operation: str,
         metadata: AuditMetadata | None = None,
         **kwargs,
-    ) -> "QueryAuditRecord":
+    ) -> QueryAuditRecord:
         metadata = metadata or AuditMetadata()
         return cls(
             operation=operation,

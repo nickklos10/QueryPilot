@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 _SMOKE_YAML = """name: smoke
 
 # Update fixture_db to point at your own SQLite or Postgres test database.

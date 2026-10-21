@@ -4,7 +4,7 @@ import math
 from collections import Counter
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, Field
 from sqlglot import parse_one
@@ -16,7 +16,7 @@ from querypilot.evals.suite import ComparisonConfig
 class _NaNSentinel:
     _instance = None
 
-    def __new__(cls) -> "_NaNSentinel":
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
@@ -183,8 +183,10 @@ def _compare_values_only(
             matched=False,
             order_sensitive=order_sensitive,
             column_mismatch=[
-                f"column count mismatch: gold has {len(gold_cols)} columns, "
-                f"candidate has {len(candidate_cols)}"
+                (
+                    f"column count mismatch: gold has {len(gold_cols)} columns, "
+                    f"candidate has {len(candidate_cols)}"
+                )
             ],
             normalized_gold_rows=norm_gold,
             normalized_candidate_rows=norm_candidate,

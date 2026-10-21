@@ -27,7 +27,6 @@ from querypilot.evals.suite import BenchmarkCase
 from querypilot.generation.llm import OpenAICompatibleSQLGenerator
 from querypilot.generation.sql_generator import DemoSQLGenerator
 
-
 FIXTURE_DB = Path(__file__).resolve().parents[1] / "fixtures" / "demo.db"
 
 
