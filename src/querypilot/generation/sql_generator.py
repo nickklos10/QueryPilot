@@ -61,8 +61,10 @@ class DemoSQLGenerator:
             sql=None,
             explanation=None,
             errors=[
-                "Offline generator could not map this question to a safe SQL template. "
-                "Configure a SQLGenerator provider for broader natural-language support."
+                (
+                    "Offline generator could not map this question to a safe SQL template. "
+                    "Configure a SQLGenerator provider for broader natural-language support."
+                )
             ],
         )
 

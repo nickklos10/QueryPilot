@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from querypilot import QueryPilot
 from querypilot.evals.cost import (
@@ -15,7 +15,6 @@ from querypilot.evals.loader import load_suite, load_suite_dir
 from querypilot.evals.pipeline import QueryPilotFactory
 from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite
 from querypilot.generation.sql_generator import DemoSQLGenerator, SQLGenerator
-
 
 GENERATOR_NAMES = ("demo", "openai", "anthropic", "openai-compatible")
 

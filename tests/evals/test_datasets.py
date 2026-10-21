@@ -19,7 +19,6 @@ from querypilot.evals.factory import build_qp_factory
 from querypilot.evals.loader import SuiteLoadError, load_suite_dir
 from querypilot.generation.sql_generator import DemoSQLGenerator
 
-
 # --------------------------------------------------------------------------- #
 # Synthetic dataset builders (tiny; generated at runtime, nothing committed).
 # --------------------------------------------------------------------------- #

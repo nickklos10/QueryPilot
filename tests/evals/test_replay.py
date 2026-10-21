@@ -18,10 +18,9 @@ from querypilot.evals import (
     replay_from_sink,
     run_suite,
 )
-from querypilot.evals.factory import build_qp_factory
 from querypilot.evals.cost import NullCostTracker
+from querypilot.evals.factory import build_qp_factory
 from querypilot.generation.sql_generator import DemoSQLGenerator
-
 
 FIXTURE_DB = Path(__file__).resolve().parents[1] / "fixtures" / "demo.db"
 

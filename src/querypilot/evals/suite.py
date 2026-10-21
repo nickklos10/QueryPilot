@@ -55,7 +55,7 @@ class BenchmarkCase(BaseModel):
     original_question: str | None = None
 
     @model_validator(mode="after")
-    def _check_inputs(self) -> "BenchmarkCase":
+    def _check_inputs(self) -> BenchmarkCase:
         if self.question is None and self.sql is None:
             raise ValueError(
                 f"BenchmarkCase {self.id!r}: must set 'question' (NL case) or 'sql' (safety case)."
@@ -77,7 +77,7 @@ class BenchmarkSuite(BaseModel):
     cases: list[BenchmarkCase]
 
     @model_validator(mode="after")
-    def _check_suite(self) -> "BenchmarkSuite":
+    def _check_suite(self) -> BenchmarkSuite:
         seen: set[str] = set()
         for case in self.cases:
             if case.id in seen:

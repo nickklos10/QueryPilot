@@ -4,7 +4,6 @@ from pathlib import Path
 
 from querypilot.evals.suite_runner import SuiteReport
 
-
 _CHECK = "✅"  # ✅
 _CROSS = "❌"  # ❌
 
@@ -179,8 +178,10 @@ def _latency_cost_lines(report: SuiteReport) -> list[str]:
         f"  validate              {report.avg_validate_ms} ms avg",
         f"  repair                {report.avg_repair_ms_when_triggered} ms avg {repair_label}",
         f"  execute               {report.avg_execute_ms} ms avg",
-        f"  total tokens          prompt={report.total_prompt_tokens}, "
-        f"completion={report.total_completion_tokens}",
+        (
+            f"  total tokens          prompt={report.total_prompt_tokens}, "
+            f"completion={report.total_completion_tokens}"
+        ),
         f"  estimated cost        ${report.estimated_cost_usd:.4f}",
     ]
 

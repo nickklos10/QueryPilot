@@ -6,8 +6,8 @@ import os
 import sys
 from pathlib import Path
 
-from querypilot.access import AccessPolicy
 from querypilot import QueryPilot
+from querypilot.access import AccessPolicy
 
 
 def main(argv: list[str] | None = None) -> int:

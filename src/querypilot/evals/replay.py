@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 from querypilot.audit.sinks import AuditSink
 from querypilot.audit.types import QueryAuditRecord
-from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite, ComparisonConfig, SuiteThresholds
-
+from querypilot.evals.suite import (
+    BenchmarkCase,
+    BenchmarkSuite,
+    ComparisonConfig,
+    SuiteThresholds,
+)
 
 _DEFAULT_TAGS = ("replay", "regression")
 _DEFAULT_REPLAY_OPERATION = "ask"
@@ -190,8 +194,7 @@ def _eligible(
     if skip_masked and _has_active_policy(record.access_policy):
         return False
     if skip_empty_results:
-        if record.row_count is None or record.row_count < min_row_count:
-            return False
+        return record.row_count is not None and record.row_count >= min_row_count
     return True
 
 

@@ -7,7 +7,6 @@ import pytest
 
 from querypilot.cli import main as cli_main
 
-
 FIXTURE_DB = Path(__file__).resolve().parents[1] / "fixtures" / "demo.db"
 
 

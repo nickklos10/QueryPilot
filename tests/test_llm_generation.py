@@ -12,7 +12,6 @@ from querypilot.generation.llm import (
 )
 from querypilot.generation.prompt_builder import build_sql_generation_prompt
 
-
 VALID_SQL_JSON = (
     '{"sql": "SELECT customer_name, revenue FROM customers", '
     '"explanation": "Ranks customers by revenue."}'

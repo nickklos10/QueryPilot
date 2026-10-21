@@ -7,7 +7,6 @@ from typing import Any
 from querypilot.core.types import DatabaseSchema, GeneratedSQL, ValidationResult
 from querypilot.generation.prompt_builder import build_sql_generation_prompt
 
-
 SQL_JSON_SCHEMA: dict[str, Any] = {
     "name": "querypilot_sql",
     "schema": {
