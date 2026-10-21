@@ -1,4 +1,5 @@
 from querypilot.access import AccessPolicy, MaskingRule
+from querypilot.adapters.toolkit import QueryPilotTool, QueryPilotToolkit
 from querypilot.audit import (
     AuditMetadata,
     InMemoryAuditSink,
@@ -34,6 +35,8 @@ __all__ = [
     "QueryAuditRecord",
     "QueryPilot",
     "QueryPilotAnswer",
+    "QueryPilotTool",
+    "QueryPilotToolkit",
     "QueryResult",
     "SchemaMatch",
     "TableSchema",

@@ -5,10 +5,13 @@ Run:
     export OPENAI_API_KEY=sk-...
     python examples/02_openai_tool_use.py
 
-QueryPilot hands the model four safe tools (ask_database, search_schema,
-validate_sql, execute_sql) via ``as_openai_tools()``. The model decides which
-to call; every call is routed back through QueryPilot's validation + execution,
-so the model never touches the database directly.
+QueryPilot hands the model its safe tools (list_tables, describe_table,
+search_schema, validate_sql, run_sql) via ``as_openai_tools()``. The model
+decides which to call; ``qp.handle_tool_call`` routes every call back through
+QueryPilot's validation + execution, so the model never touches the database
+directly. Failures (bad SQL, blocked columns, unknown tables) come back as
+``{"ok": false, "error": ..., "hints": [...]}`` payloads the model can act on,
+so there is nothing to catch.
 
 The QueryPilot connection and tool-schema build happen BEFORE the API-key guard,
 so you can confirm the schema wiring even without a key configured.
@@ -29,19 +32,6 @@ MODEL = "gpt-5.1"
 QUESTION = "Which customer has the highest ARR? Use the database."
 
 
-def dispatch_tool(qp: QueryPilot, name: str, arguments: dict[str, Any]) -> Any:
-    """Route an OpenAI tool call back through QueryPilot's safe surface."""
-    if name == "ask_database":
-        return qp.ask(str(arguments["question"])).model_dump()
-    if name == "search_schema":
-        return [match.model_dump() for match in qp.search_schema(str(arguments["query"]))]
-    if name == "validate_sql":
-        return qp.validate_sql(str(arguments["sql"])).model_dump()
-    if name == "execute_sql":
-        return qp.execute_sql(str(arguments["sql"])).model_dump()
-    raise ValueError(f"Unknown tool: {name}")
-
-
 def main() -> None:
     # Build the QueryPilot instance and tool schemas first -- no key needed here.
     qp = QueryPilot.connect(database_url=demo_database_url(), dialect="sqlite")
@@ -56,7 +46,10 @@ def main() -> None:
     from openai import OpenAI
 
     client = OpenAI()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": QUESTION}]
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": qp.toolkit().instructions()},
+        {"role": "user", "content": QUESTION},
+    ]
 
     for _ in range(6):  # bounded tool-use loop
         response = client.chat.completions.create(
@@ -73,14 +66,14 @@ def main() -> None:
 
         for tool_call in message.tool_calls:
             name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
+            arguments = tool_call.function.arguments  # a JSON string; passed through as-is
             print(f"\n-> tool call: {name}({arguments})")
-            output = dispatch_tool(qp, name, arguments)
+            output = qp.handle_tool_call(name, arguments)
             messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": json.dumps(output, default=str),
+                    "content": json.dumps(output),
                 }
             )
 

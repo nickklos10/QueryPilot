@@ -49,6 +49,15 @@ jobs:
       - name: Run unit tests
         run: pytest
 
+      - name: Validate SaaSPulse golds and safety cases
+        run: python benchmarks/validate_golds.py
+
+      - name: Quickstart smoke
+        run: |
+          querypilot demo --path "$RUNNER_TEMP/demo.db"
+          querypilot sql --db "sqlite:///$RUNNER_TEMP/demo.db" "SELECT segment, COUNT(*) AS n FROM customers GROUP BY segment"
+          querypilot schema --db "sqlite:///$RUNNER_TEMP/demo.db" customers
+
       - name: Run smoke eval suite
         run: |
           querypilot eval run \

@@ -5,9 +5,11 @@ Run:
     export ANTHROPIC_API_KEY=sk-ant-...
     python examples/03_anthropic_tool_use.py
 
-QueryPilot exposes the same four safe tools to Claude via ``as_anthropic_tools()``.
-Tool calls are dispatched with the built-in ``qp.handle_anthropic_tool_call``
-helper, which routes each call back through QueryPilot's validation + execution.
+QueryPilot exposes the same safe tools to Claude via ``as_anthropic_tools()``.
+Tool calls are dispatched with ``qp.handle_tool_call``, which routes each call
+back through QueryPilot's validation + execution. Errors come back as
+``{"ok": false, "error": ..., "hints": [...]}`` payloads, so nothing needs catching;
+they are flagged with ``is_error`` so Claude knows to fix the call and retry.
 
 The connection and tool-schema build happen BEFORE the API-key guard, so the
 schema wiring is verifiable even without a key configured.
@@ -15,6 +17,7 @@ schema wiring is verifiable even without a key configured.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from typing import Any
@@ -47,6 +50,7 @@ def main() -> None:
         message = client.messages.create(
             model=MODEL,
             max_tokens=1024,
+            system=qp.toolkit().instructions(),
             tools=tools,
             messages=messages,
         )
@@ -64,12 +68,13 @@ def main() -> None:
             if block.type != "tool_use":
                 continue
             print(f"\n-> tool call: {block.name}({block.input})")
-            output = qp.handle_anthropic_tool_call(block.name, block.input)
+            output = qp.handle_tool_call(block.name, block.input)
             tool_results.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": block.id,
-                    "content": str(output),
+                    "content": json.dumps(output),
+                    "is_error": output.get("ok") is False,
                 }
             )
         messages.append({"role": "user", "content": tool_results})

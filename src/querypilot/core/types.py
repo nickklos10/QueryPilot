@@ -7,11 +7,27 @@ class ColumnSchema(BaseModel):
     name: str
     type: str
     nullable: bool = True
+    primary_key: bool = False
+    comment: str | None = None
+    # A few distinct stored values, shown to the model so it filters on real literals.
+    sample_values: list[str] = Field(default_factory=list)
+    # True when sample_values lists every value the column holds (a small enum).
+    sample_values_complete: bool = False
+
+
+class ForeignKey(BaseModel):
+    columns: list[str]
+    referred_table: str
+    referred_columns: list[str]
 
 
 class TableSchema(BaseModel):
     name: str
     columns: list[ColumnSchema] = Field(default_factory=list)
+    schema_name: str | None = None
+    comment: str | None = None
+    foreign_keys: list[ForeignKey] = Field(default_factory=list)
+    is_view: bool = False
 
     def get_column(self, name: str) -> ColumnSchema | None:
         lowered = name.lower()
@@ -21,6 +37,8 @@ class TableSchema(BaseModel):
 class DatabaseSchema(BaseModel):
     dialect: str
     tables: list[TableSchema] = Field(default_factory=list)
+    # Business rules and glossary entries for the model (from QueryPilotConfig.hints).
+    hints: list[str] = Field(default_factory=list)
 
     def get_table(self, name: str) -> TableSchema | None:
         normalized = name.split(".")[-1].strip('"').lower()
@@ -83,7 +101,10 @@ class QueryResult(BaseModel):
 class QueryPilotAnswer(BaseModel):
     audit_id: str | None = None
     question: str
+    # The executed SQL (after the validator's rewrite: row limit, row filters).
     sql: str
+    # The SQL as the generator wrote it.
+    generated_sql: str | None = None
     rows: list[dict] = Field(default_factory=list)
     explanation: str
     validation: ValidationResult

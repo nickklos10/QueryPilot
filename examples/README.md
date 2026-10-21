@@ -31,6 +31,7 @@ Then run any example from the repo root, e.g.:
 | [`04_access_control.py`](04_access_control.py) | `AccessPolicy`: blocked columns, row filter, masking — a rejected query and a masked result | `python examples/04_access_control.py` | No |
 | [`05_custom_eval_suite/`](05_custom_eval_suite/) | A custom YAML suite (3 correctness + 1 safety case) run with `querypilot eval run` / `check` | `bash examples/05_custom_eval_suite/run.sh` | No |
 | [`06_mcp/`](06_mcp/) | Run `querypilot mcp` and a paste-ready Claude Desktop / Claude Code MCP config | see [`06_mcp/README.md`](06_mcp/README.md) | No |
+| [`07_frameworks.py`](07_frameworks.py) | The same safe tools as LangChain, OpenAI Agents SDK and Claude Agent SDK tools | `pip install -e ".[langchain,openai-agents,claude-agent]"` then `python examples/07_frameworks.py` | No |
 
 Examples 02 and 03 build the QueryPilot connection and tool schemas *before*
 their API-key guard, so you can confirm the schema wiring even without a key —

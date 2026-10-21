@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, text
 
 from querypilot.audit import AuditMetadata, InMemoryAuditSink
 from querypilot.core.client import QueryPilot
-from querypilot.core.types import GeneratedSQL, ValidationResult
+from querypilot.core.types import ValidationResult
 from querypilot.evals.compare import RowsetMatch, compare_rows
 from querypilot.evals.cost import CostTracker, NullCostTracker, TokenUsage
 from querypilot.evals.suite import BenchmarkCase, ComparisonConfig
@@ -179,30 +179,34 @@ def _run_question_case(
     timings = StageTimings()
     question = case.question or ""
 
-    with _timer() as t:
-        generated = qp.generate_sql(question)
-    timings.generate_ms = t.elapsed_ms
+    # The same generate -> validate -> execute -> repair loop as QueryPilot.ask,
+    # so eval numbers measure exactly what users get.
+    run = qp._generate_and_run(question)
+    timings.generate_ms = run.generate_ms
+    timings.validate_ms = run.validate_ms
+    timings.repair_ms = run.repair_ms
+    timings.execute_ms = run.execute_ms
+    repair_attempts = run.repair_attempts
+    validation = run.validation
+    final_sql = run.sql
 
-    if generated.sql is None:
+    if run.failure == "generation" and validation is None:
+        generation_errors = run.generated.errors if run.generated else []
         return CaseResult(
             id=case.id,
             passed=False,
             failure_category=FailureCategory.GENERATION_FAILED,
             question=question,
             gold_sql=case.gold_sql,
+            repair_attempts=repair_attempts,
             timings=timings,
             token_usage=cost_tracker.last_usage(),
             estimated_cost_usd=_estimated_cost(cost_tracker.last_usage()),
             tags=list(case.tags),
-            error="; ".join(generated.errors) or "generator returned no SQL",
+            error="; ".join(generation_errors) or "generator returned no SQL",
         )
 
-    validation, repair_attempts, validate_ms, repair_ms, final_sql = _validate_with_repair(
-        qp, question, generated, case
-    )
-    timings.validate_ms = validate_ms
-    timings.repair_ms = repair_ms
-
+    assert validation is not None
     if not validation.valid or validation.rewritten_sql is None:
         category = (
             FailureCategory.REPAIR_FAILED
@@ -228,20 +232,9 @@ def _run_question_case(
         )
 
     schema_failure = _schema_selection_failure(case, validation)
-    text_failure = _text_check_failure(case, validation.rewritten_sql or final_sql)
+    text_failure = _text_check_failure(case, validation.rewritten_sql or final_sql or "")
 
-    candidate_rows: list[dict] | None = None
-    execute_error: str | None = None
-    try:
-        with _timer() as t:
-            result = qp.execute_sql(final_sql)
-        timings.execute_ms = t.elapsed_ms
-        candidate_rows = result.rows
-    except Exception as exc:  # noqa: BLE001 - recorded as execute_error
-        timings.execute_ms = 0
-        execute_error = f"{type(exc).__name__}: {exc}"
-
-    if candidate_rows is None:
+    if run.result is None:
         return CaseResult(
             id=case.id,
             passed=False,
@@ -258,8 +251,9 @@ def _run_question_case(
             token_usage=cost_tracker.last_usage(),
             estimated_cost_usd=_estimated_cost(cost_tracker.last_usage()),
             tags=list(case.tags),
-            error=execute_error,
+            error=run.audit_error or run.error,
         )
+    candidate_rows = run.result.rows
 
     if schema_failure is not None:
         return CaseResult(
@@ -384,43 +378,6 @@ def _run_question_case(
         estimated_cost_usd=_estimated_cost(cost_tracker.last_usage()),
         tags=list(case.tags),
     )
-
-
-def _validate_with_repair(
-    qp: QueryPilot, question: str, generated: GeneratedSQL, case: BenchmarkCase
-) -> tuple[ValidationResult, int, int, int, str]:
-    validate_total = 0
-    repair_total = 0
-    repair_attempts = 0
-    sql = generated.sql
-    assert sql is not None
-
-    with _timer() as t:
-        validation = qp.validate_sql(sql)
-    validate_total += t.elapsed_ms
-
-    max_attempts = qp.config.max_generation_attempts
-    while not (validation.valid and validation.rewritten_sql is not None):
-        if not hasattr(qp.generator, "repair") or repair_attempts >= max_attempts - 1:
-            break
-        with _timer() as t:
-            generated = qp.generator.repair(  # type: ignore[attr-defined]
-                question,
-                qp.get_schema(),
-                qp.config.max_rows,
-                sql,
-                validation,
-            )
-        repair_total += t.elapsed_ms
-        repair_attempts += 1
-        if generated.sql is None:
-            break
-        sql = generated.sql
-        with _timer() as t:
-            validation = qp.validate_sql(sql)
-        validate_total += t.elapsed_ms
-
-    return validation, repair_attempts, validate_total, repair_total, sql
 
 
 def _schema_selection_failure(case: BenchmarkCase, validation: ValidationResult) -> str | None:
