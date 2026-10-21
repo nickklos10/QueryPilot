@@ -26,6 +26,7 @@ from querypilot.core.types import (
     QueryPilotAnswer,
     QueryResult,
     SchemaMatch,
+    TableSchema,
     ValidationResult,
 )
 from querypilot.execution.formatter import explain_result
@@ -120,6 +121,17 @@ class QueryPilot:
         """Drop the cached schema and introspect the database again."""
         self._schema = None
         return self.get_schema()
+
+    def table_details(self, table_names: list[str]) -> list[TableSchema]:
+        """Return full table definitions (keys, comments, sample values) for the named tables."""
+        schema = self.get_schema()
+        tables = [schema.get_table(name) for name in table_names]
+        return [table for table in tables if table is not None]
+
+    def schema_for_prompt(self, question: str) -> DatabaseSchema:
+        """Return the schema context sent to the generator for this question."""
+        schema = self.get_schema()
+        return schema.model_copy(update={"hints": list(self.config.hints)})
 
     def search_schema(self, query: str) -> list[SchemaMatch]:
         matches = search_schema_impl(self.get_schema(), query)

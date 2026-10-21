@@ -35,6 +35,8 @@ class TableSchema(BaseModel):
 class DatabaseSchema(BaseModel):
     dialect: str
     tables: list[TableSchema] = Field(default_factory=list)
+    # Business rules and glossary entries for the model (from QueryPilotConfig.hints).
+    hints: list[str] = Field(default_factory=list)
 
     def get_table(self, name: str) -> TableSchema | None:
         normalized = name.split(".")[-1].strip('"').lower()
