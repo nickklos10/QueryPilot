@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.optimizer.scope import Scope, ScopeType, traverse_scope
 
+from querypilot.access.policy import MASK_STRENGTH
 from querypilot.core.config import QueryPilotConfig
 from querypilot.core.types import DatabaseSchema, PolicyCheck, ValidationResult
+
+_QUERY_TYPES = (exp.Select, exp.Union, exp.Intersect, exp.Except)
+_SET_OPERATION_TYPES = (exp.Union, exp.Intersect, exp.Except)
+# sqlglot renamed ScopeType.UNION to SET_OPERATION; support both.
+_SET_OPERATION_SCOPE = ScopeType["SET_OPERATION" if "SET_OPERATION" in ScopeType.__members__ else "UNION"]
 
 
 class SQLValidator:
@@ -81,7 +88,8 @@ class SQLValidator:
         expression = statements[0]
         checks.append(PolicyCheck(name="parseable", passed=True, message="SQL parsed successfully."))
 
-        if not isinstance(expression, exp.Select):
+        is_query = isinstance(expression, _QUERY_TYPES)
+        if not is_query:
             readonly = False
             errors.append("Only SELECT queries are allowed.")
             blocked_reason = blocked_reason or "Only SELECT queries are allowed."
@@ -151,8 +159,19 @@ class SQLValidator:
                 )
             )
 
-        relation_scope = _relation_scope(expression)
-        tables = list(relation_scope.tables)
+        analysis = _QueryAnalysis()
+        if is_query and non_readonly_operation is None:
+            try:
+                analysis = _analyze_query(expression, schema)
+            # sqlglot raises several error types on unusual trees; any failure fails closed.
+            except Exception as exc:  # noqa: BLE001
+                analysis = _QueryAnalysis(errors=[f"Could not analyze query structure: {exc}"])
+        if analysis.errors:
+            errors.extend(analysis.errors)
+            blocked_reason = blocked_reason or analysis.errors[0]
+            risk_level = _max_risk(risk_level, "high")
+
+        tables = analysis.tables
         columns = sorted(
             {
                 _normalize_identifier(column.name)
@@ -188,11 +207,7 @@ class SQLValidator:
             )
         )
 
-        column_refs, column_errors = _resolve_column_references(
-            expression,
-            relation_scope,
-            schema,
-        )
+        column_refs, column_errors = analysis.column_refs, analysis.column_errors
         if column_errors:
             errors.extend(column_errors)
             blocked_reason = blocked_reason or column_errors[0]
@@ -209,10 +224,9 @@ class SQLValidator:
             )
         )
 
-        star_tables = _star_tables(expression, relation_scope)
         access_errors = _access_policy_errors(
             column_refs,
-            star_tables,
+            analysis.star_tables,
             schema,
             self.config.access_policy,
         )
@@ -238,7 +252,7 @@ class SQLValidator:
                 )
             )
 
-        has_select_star = bool(star_tables)
+        has_select_star = analysis.has_star
         if has_select_star and self.config.safety_policy.warn_on_select_star:
             warnings.append("SELECT * may expose more data than intended.")
             risk_level = _max_risk(risk_level, "medium")
@@ -287,9 +301,15 @@ class SQLValidator:
                 )
             )
 
+        output_masks, mask_error = _output_masks(analysis, self.config.access_policy)
+        if mask_error is not None:
+            errors.append(mask_error)
+            blocked_reason = blocked_reason or mask_error
+            risk_level = _max_risk(risk_level, "high")
+
         expression, row_filter_errors = _apply_row_filters(
             expression,
-            tables,
+            analysis,
             self.config.access_policy.row_filters,
             self.config.dialect,
         )
@@ -328,6 +348,7 @@ class SQLValidator:
             policy_checks=checks,
             query_fingerprint=_fingerprint(rewritten_sql if not errors else stripped),
             access_policy=access_policy_summary,
+            output_masks=output_masks if not errors else [],
             warnings=warnings,
             errors=errors,
         )
@@ -342,6 +363,7 @@ def _non_readonly_operation(expression: exp.Expression) -> str | None:
         exp.Delete,
         exp.Drop,
         exp.Insert,
+        exp.Into,
         exp.Merge,
         exp.TruncateTable,
         exp.Update,
@@ -382,81 +404,307 @@ def _normalize_identifier(identifier: str) -> str:
 
 
 @dataclass(frozen=True)
-class _RelationScope:
-    tables: tuple[str, ...]
-    aliases: dict[str, str]
-
-    def resolve_table(self, qualifier: str) -> str | None:
-        normalized = _normalize_identifier(qualifier).lower()
-        return self.aliases.get(normalized)
+class _Output:
+    name: str
+    sources: frozenset[tuple[str, str]]
 
 
-def _relation_scope(expression: exp.Expression) -> _RelationScope:
-    tables: set[str] = set()
-    aliases: dict[str, str] = {}
-    for table in expression.find_all(exp.Table):
-        table_name = _normalize_identifier(table.name).lower()
-        alias_name = _normalize_identifier(table.alias_or_name).lower()
-        tables.add(table_name)
-        aliases[table_name] = table_name
-        aliases[alias_name] = table_name
-    return _RelationScope(tables=tuple(sorted(tables)), aliases=aliases)
+@dataclass(frozen=True)
+class _Resolution:
+    sources: frozenset[tuple[str, str]] = frozenset()
+    base_ref: tuple[str, str] | None = None
+    error: str | None = None
 
 
-def _resolve_column_references(
-    expression: exp.Expression,
-    scope: _RelationScope,
-    schema: DatabaseSchema,
-) -> tuple[list[tuple[str, str]], list[str]]:
-    references: list[tuple[str, str]] = []
-    errors: list[str] = []
+@dataclass
+class _QueryAnalysis:
+    tables: list[str] = field(default_factory=list)
+    column_refs: list[tuple[str, str]] = field(default_factory=list)
+    column_errors: list[str] = field(default_factory=list)
+    star_tables: set[str] = field(default_factory=set)
+    has_star: bool = False
+    # Every reference to a physical table, so row filters can wrap each one in place.
+    base_tables: list[exp.Table] = field(default_factory=list)
+    # Table nodes no scope claimed; row filters fail closed on these.
+    unscoped_tables: list[exp.Table] = field(default_factory=list)
+    outputs: list[_Output] = field(default_factory=list)
+    outputs_complete: bool = True
+    errors: list[str] = field(default_factory=list)
 
-    for column in expression.find_all(exp.Column):
-        column_name = _normalize_identifier(column.name).lower()
-        if column_name == "*":
+
+def _analyze_query(expression: exp.Expression, schema: DatabaseSchema) -> _QueryAnalysis:
+    scopes = list(traverse_scope(expression))
+    resolver = _ScopeResolver(scopes, schema)
+    analysis = _QueryAnalysis()
+    seen_tables: set[int] = set()
+    column_errors: list[str] = []
+
+    for scope in scopes:
+        for table in scope.tables:
+            seen_tables.add(id(table))
+            if isinstance(scope.sources.get(table.alias_or_name), exp.Table):
+                analysis.base_tables.append(table)
+
+        if not isinstance(scope.expression, exp.Select):
             continue
 
-        if column.table:
-            table_name = scope.resolve_table(column.table)
-            if table_name is None:
-                errors.append(f"Unknown table qualifier: {column.table}")
+        for column in _own_columns(scope):
+            if _is_star(column):
                 continue
-            table = schema.get_table(table_name)
-            if table is not None and table.get_column(column_name) is None:
-                errors.append(f"Unknown column: {column_name}")
-                continue
-            references.append((table_name, column_name))
-            continue
+            resolution = resolver.resolve(scope, column)
+            if resolution.error is not None:
+                column_errors.append(resolution.error)
+            elif resolution.base_ref is not None:
+                analysis.column_refs.append(resolution.base_ref)
 
-        candidates = [
-            table_name
-            for table_name in scope.tables
-            if (table := schema.get_table(table_name)) is not None
-            and table.get_column(column_name) is not None
-        ]
-        if len(candidates) == 1:
-            references.append((candidates[0], column_name))
-        elif not candidates:
-            errors.append(f"Unknown column: {column_name}")
+        for projection in scope.expression.expressions:
+            if not _is_star(projection):
+                continue
+            analysis.has_star = True
+            for source in resolver.star_sources(scope, projection):
+                if isinstance(source, exp.Table):
+                    analysis.star_tables.add(_normalize_identifier(source.name).lower())
+
+    analysis.unscoped_tables = [
+        table for table in expression.find_all(exp.Table) if id(table) not in seen_tables
+    ]
+    analysis.tables = sorted(
+        {
+            _normalize_identifier(table.name).lower()
+            for table in [*analysis.base_tables, *analysis.unscoped_tables]
+        }
+    )
+    analysis.column_errors = list(dict.fromkeys(column_errors))
+
+    root = resolver.scope_for(expression)
+    analysis.outputs = resolver.outputs(root) if root is not None else []
+    analysis.outputs_complete = root is not None and resolver.complete
+    return analysis
+
+
+class _ScopeResolver:
+    """Resolves columns and output lineage through CTEs, derived tables, and set operations."""
+
+    def __init__(self, scopes: list[Scope], schema: DatabaseSchema) -> None:
+        self.schema = schema
+        self.complete = True
+        self._by_expression = {id(scope.expression): scope for scope in scopes}
+        self._outputs: dict[int, list[_Output]] = {}
+
+    def scope_for(self, node: exp.Expression) -> Scope | None:
+        return self._by_expression.get(id(node))
+
+    def resolve(self, scope: Scope, column: exp.Column) -> _Resolution:
+        name = _normalize_identifier(column.name).lower()
+        qualifier = _normalize_identifier(column.table).lower() if column.table else None
+
+        for current in _lookup_chain(scope):
+            sources = _selected_sources(current)
+            if qualifier is not None:
+                if qualifier in sources:
+                    return self._resolve_in_source(sources[qualifier], name)
+                continue
+            matches = [source for source in sources.values() if self._has_column(source, name)]
+            if len(matches) == 1:
+                return self._resolve_in_source(matches[0], name)
+            if len(matches) > 1:
+                return _Resolution(error=f"Ambiguous column: {name}")
+
+        if qualifier is not None:
+            return _Resolution(error=f"Unknown table qualifier: {column.table}")
+        return _Resolution(error=f"Unknown column: {name}")
+
+    def star_sources(self, scope: Scope, star: exp.Expression) -> list[exp.Table | Scope]:
+        sources = _selected_sources(scope)
+        qualifier = star.table if isinstance(star, exp.Column) else ""
+        if not qualifier:
+            return list(sources.values())
+        source = sources.get(_normalize_identifier(qualifier).lower())
+        return [source] if source is not None else []
+
+    def outputs(self, scope: Scope) -> list[_Output]:
+        key = id(scope)
+        if key in self._outputs:
+            return self._outputs[key]
+        self._outputs[key] = []
+
+        expression = scope.expression
+        if isinstance(expression, _SET_OPERATION_TYPES):
+            # A recursive CTE's later branches reference this scope; the anchor
+            # branch defines its columns, so expose those while the rest resolves.
+            anchor = self._branch_outputs(expression.this)
+            self._outputs[key] = _apply_alias_columns(expression, anchor)
+            outputs = self._set_operation_outputs(expression)
+        elif isinstance(expression, exp.Select):
+            outputs = self._select_outputs(scope)
         else:
-            errors.append(f"Ambiguous column: {column_name}")
+            self.complete = False
+            outputs = []
 
-    return references, list(dict.fromkeys(errors))
+        outputs = _apply_alias_columns(expression, outputs)
+        self._outputs[key] = outputs
+        return outputs
+
+    def _resolve_in_source(self, source: exp.Table | Scope, name: str) -> _Resolution:
+        if isinstance(source, exp.Table):
+            table_name = _normalize_identifier(source.name).lower()
+            table = self.schema.get_table(table_name)
+            if table is not None and table.get_column(name) is None:
+                return _Resolution(error=f"Unknown column: {name}")
+            ref = (table_name, name)
+            return _Resolution(sources=frozenset({ref}), base_ref=ref)
+
+        matches = [output for output in self.outputs(source) if output.name == name]
+        if not matches:
+            return _Resolution(error=f"Unknown column: {name}")
+        return _Resolution(sources=frozenset().union(*(output.sources for output in matches)))
+
+    def _has_column(self, source: exp.Table | Scope, name: str) -> bool:
+        if isinstance(source, exp.Table):
+            table = self.schema.get_table(_normalize_identifier(source.name))
+            return table is not None and table.get_column(name) is not None
+        return any(output.name == name for output in self.outputs(source))
+
+    def _select_outputs(self, scope: Scope) -> list[_Output]:
+        own_columns = {id(column) for column in _own_columns(scope)}
+        outputs: list[_Output] = []
+        for projection in scope.expression.expressions:
+            if _is_star(projection):
+                for source in self.star_sources(scope, projection):
+                    outputs.extend(self._source_outputs(source))
+                continue
+
+            sources: set[tuple[str, str]] = set()
+            for column in projection.find_all(exp.Column):
+                if id(column) not in own_columns or _is_star(column) or _inside_count(column, projection):
+                    continue
+                sources |= self.resolve(scope, column).sources
+            for node in projection.find_all(*_QUERY_TYPES):
+                child = self.scope_for(node)
+                if child is not None:
+                    for output in self.outputs(child):
+                        sources |= output.sources
+            outputs.append(
+                _Output(
+                    name=_normalize_identifier(projection.alias_or_name).lower(),
+                    sources=frozenset(sources),
+                )
+            )
+        return outputs
+
+    def _set_operation_outputs(self, expression: exp.Expression) -> list[_Output]:
+        left = self._branch_outputs(expression.this)
+        right = self._branch_outputs(expression.expression)
+        merged = [
+            _Output(name=lhs.name, sources=lhs.sources | rhs.sources)
+            for lhs, rhs in zip(left, right)
+        ]
+        return merged + left[len(right):]
+
+    def _branch_outputs(self, node: exp.Expression) -> list[_Output]:
+        if isinstance(node, exp.Subquery):
+            node = node.this
+        scope = self.scope_for(node)
+        if scope is not None:
+            return self.outputs(scope)
+        if isinstance(node, _SET_OPERATION_TYPES):
+            return self._set_operation_outputs(node)
+        self.complete = False
+        return []
+
+    def _source_outputs(self, source: exp.Table | Scope) -> list[_Output]:
+        if isinstance(source, Scope):
+            return self.outputs(source)
+        table_name = _normalize_identifier(source.name).lower()
+        table = self.schema.get_table(table_name)
+        if table is None:
+            self.complete = False
+            return []
+        return [
+            _Output(name=column.name.lower(), sources=frozenset({(table_name, column.name.lower())}))
+            for column in table.columns
+        ]
 
 
-def _star_tables(expression: exp.Expression, scope: _RelationScope) -> set[str]:
-    exposed_tables: set[str] = set()
-    for star in expression.find_all(exp.Star):
-        parent = star.parent
-        if isinstance(parent, exp.Func):
-            continue
-        if isinstance(parent, exp.Column) and parent.table:
-            table_name = scope.resolve_table(parent.table)
-            if table_name is not None:
-                exposed_tables.add(table_name)
-            continue
-        exposed_tables.update(scope.tables)
-    return exposed_tables
+def _lookup_chain(scope: Scope):
+    """Yield the scope, then enclosing scopes a correlated subquery may reference."""
+    current: Scope | None = scope
+    while current is not None:
+        yield current
+        if current.scope_type not in (ScopeType.SUBQUERY, _SET_OPERATION_SCOPE):
+            return
+        current = current.parent
+
+
+def _own_columns(scope: Scope) -> list[exp.Column]:
+    """Columns written in this scope's own query, not in a nested subquery.
+
+    sqlglot also lists a child subquery's unqualified columns on the parent scope
+    (as possible correlated references); those are resolved in the child scope.
+    """
+    return [
+        column
+        for column in scope.columns
+        if column.find_ancestor(*_QUERY_TYPES) is scope.expression
+    ]
+
+
+def _selected_sources(scope: Scope) -> dict[str, exp.Table | Scope]:
+    return {
+        _normalize_identifier(name).lower(): source
+        for name, (_, source) in scope.selected_sources.items()
+    }
+
+
+def _apply_alias_columns(expression: exp.Expression, outputs: list[_Output]) -> list[_Output]:
+    # The leftmost branch of a set operation names its columns, so climb to the
+    # alias that owns it (sqlglot scopes a recursive CTE reference to its anchor).
+    node = expression
+    while isinstance(node.parent, _SET_OPERATION_TYPES) and node.parent.this is node:
+        node = node.parent
+    parent = node.parent
+    if not isinstance(parent, (exp.Subquery, exp.CTE)):
+        return outputs
+    alias = parent.args.get("alias")
+    names = [column.name.lower() for column in alias.columns] if alias is not None else []
+    if not names:
+        return outputs
+    return [
+        _Output(name=names[index] if index < len(names) else output.name, sources=output.sources)
+        for index, output in enumerate(outputs)
+    ]
+
+
+def _is_star(node: exp.Expression) -> bool:
+    return isinstance(node, exp.Star) or (
+        isinstance(node, exp.Column) and isinstance(node.this, exp.Star)
+    )
+
+
+def _inside_count(column: exp.Expression, stop: exp.Expression) -> bool:
+    node = column.parent
+    while node is not None and node is not stop:
+        if isinstance(node, exp.Count):
+            return True
+        node = node.parent
+    return isinstance(stop, exp.Count)
+
+
+def _output_masks(analysis: _QueryAnalysis, access_policy) -> tuple[list[str | None], str | None]:
+    rules = {
+        table.lower(): {column.lower(): rule.mode for column, rule in columns.items()}
+        for table, columns in access_policy.masking_rules.items()
+    }
+    if not any(table in rules for table in analysis.tables):
+        return [], None
+    if not analysis.outputs_complete:
+        return [], "Could not determine output columns for masking."
+
+    masks: list[str | None] = []
+    for output in analysis.outputs:
+        modes = [rules[table][column] for table, column in output.sources if column in rules.get(table, {})]
+        masks.append(min(modes, key=MASK_STRENGTH.__getitem__) if modes else None)
+    return masks, None
 
 
 def _lower_set(values: list[str]) -> set[str]:
@@ -465,37 +713,35 @@ def _lower_set(values: list[str]) -> set[str]:
 
 def _apply_limit(expression: exp.Expression, max_rows: int, dialect: str) -> tuple[str, bool]:
     limit = expression.args.get("limit")
-    if limit is None:
-        expression = expression.copy()
-        expression.set("limit", exp.Limit(expression=exp.Literal.number(max_rows)))
-        return expression.sql(dialect=dialect), True
+    current_limit = _limit_value(limit) if limit is not None else None
+    # Only a plain non-negative integer literal within policy is kept; anything else
+    # (LIMIT -1, expressions, subqueries, FETCH) is replaced so the cap cannot be evaded.
+    if current_limit is not None and 0 <= current_limit <= max_rows:
+        return expression.sql(dialect=dialect), False
 
-    current_limit = _limit_value(limit)
-    if current_limit is not None and current_limit > max_rows:
-        expression = expression.copy()
-        expression.set("limit", exp.Limit(expression=exp.Literal.number(max_rows)))
-        return expression.sql(dialect=dialect), True
-
-    return expression.sql(dialect=dialect), False
+    expression = expression.copy()
+    expression.set("limit", exp.Limit(expression=exp.Literal.number(max_rows)))
+    return expression.sql(dialect=dialect), True
 
 
 def _limit_value(limit: exp.Expression) -> int | None:
+    if not isinstance(limit, exp.Limit):
+        return None
     expression = limit.args.get("expression")
     if isinstance(expression, exp.Literal) and expression.is_number:
-        return int(expression.this)
+        try:
+            return int(expression.this)
+        except ValueError:
+            return None
     return None
 
 
 def _has_cartesian_join(expression: exp.Expression) -> bool:
-    if len(list(expression.find_all(exp.Table))) < 2:
-        return False
-    if expression.args.get("joins"):
-        for join in expression.args["joins"]:
+    for select in expression.find_all(exp.Select):
+        for join in select.args.get("joins") or []:
             if join.args.get("on") is None and join.args.get("using") is None:
                 return True
-        return False
-    from_expression = expression.args.get("from")
-    return from_expression is not None and len(list(from_expression.find_all(exp.Table))) > 1
+    return False
 
 
 def _fingerprint(sql: str) -> str:
@@ -573,20 +819,49 @@ def _blocked_column_summary(errors: list[str]) -> list[str]:
 
 def _apply_row_filters(
     expression: exp.Expression,
-    tables: list[str],
+    analysis: _QueryAnalysis,
     row_filters: dict[str, str],
     dialect: str,
 ) -> tuple[exp.Expression, list[str]]:
-    filtered_expression = expression
+    """Replace every reference to a filtered table with a filtered derived table.
+
+    Filtering the relation itself (rather than appending to the outer WHERE) applies
+    the filter inside subqueries, CTEs, and set operations, cannot bind to a column
+    of another table or a spoofed alias, and keeps outer-join semantics intact.
+    """
+    filters = {table.lower(): filter_sql for table, filter_sql in row_filters.items() if filter_sql}
+    if not filters:
+        return expression, []
+
     errors: list[str] = []
-    for table_name in tables:
-        filter_sql = row_filters.get(table_name)
-        if not filter_sql:
+    for table in analysis.unscoped_tables:
+        table_name = _normalize_identifier(table.name).lower()
+        if table_name in filters:
+            errors.append(f"Row filter for {table_name} could not be applied to every reference.")
+
+    conditions: dict[str, exp.Expression | None] = {}
+    for table in analysis.base_tables:
+        table_name = _normalize_identifier(table.name).lower()
+        if table_name not in filters:
             continue
-        try:
-            condition = sqlglot.parse_one(filter_sql, into=exp.Condition, read=dialect)
-        except sqlglot.errors.SqlglotError as exc:
-            errors.append(f"Invalid row filter for {table_name}: {exc}")
-            continue
-        filtered_expression = filtered_expression.where(condition, append=True, copy=True)
-    return filtered_expression, errors
+        if table_name not in conditions:
+            try:
+                conditions[table_name] = sqlglot.parse_one(
+                    filters[table_name], into=exp.Condition, read=dialect
+                )
+            except sqlglot.errors.SqlglotError as exc:
+                errors.append(f"Invalid row filter for {table_name}: {exc}")
+                conditions[table_name] = None
+        condition = conditions[table_name]
+        if condition is not None:
+            table.replace(_filtered_relation(table, condition))
+    return expression, errors
+
+
+def _filtered_relation(table: exp.Table, condition: exp.Expression) -> exp.Subquery:
+    alias = table.args.get("alias")
+    alias = alias.copy() if alias is not None else exp.TableAlias(this=table.this.copy())
+    inner = table.copy()
+    inner.set("alias", None)
+    query = exp.select("*").from_(inner).where(condition.copy())
+    return exp.Subquery(this=query, alias=alias)

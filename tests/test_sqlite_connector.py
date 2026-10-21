@@ -39,3 +39,21 @@ def test_dangerous_sql_is_not_executed(demo_db_url: str) -> None:
 
     schema = qp.get_schema()
     assert schema.get_table("customers") is not None
+
+
+def test_missing_sqlite_file_is_not_created(tmp_path) -> None:
+    missing = tmp_path / "does_not_exist.db"
+
+    with pytest.raises(FileNotFoundError, match="does_not_exist.db"):
+        QueryPilot.connect(f"sqlite:///{missing}")
+
+    assert not missing.exists()
+
+
+def test_sqlite_connection_is_opened_read_only(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url)
+
+    with pytest.raises(Exception, match="readonly"):
+        qp.connector.execute_readonly("DELETE FROM customers")
+
+    assert qp.execute_sql("SELECT COUNT(*) AS n FROM customers").rows == [{"n": 3}]
