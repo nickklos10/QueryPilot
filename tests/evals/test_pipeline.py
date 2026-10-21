@@ -338,3 +338,51 @@ def test_serializable_to_json(fixture_db_url: str) -> None:
     assert payload["passed"] is True
     assert "timings" in payload
     assert payload["tags"] == ["smoke"]
+
+
+def test_execution_error_is_repaired_like_ask(fixture_db_url: str) -> None:
+    class _ExecFailThenFix:
+        def __init__(self) -> None:
+            self.feedback: list[str] = []
+
+        def generate(self, question, schema, max_rows):
+            return GeneratedSQL(question=question, sql="SELECT nosuchfunc(1) AS count FROM customers")
+
+        def repair(self, question, schema, max_rows, previous_sql, validation):
+            self.feedback = list(validation.errors)
+            return GeneratedSQL(question=question, sql="SELECT COUNT(*) AS count FROM customers")
+
+    gen = _ExecFailThenFix()
+    result = run_case(_case(), _factory(fixture_db_url, generator=gen))
+
+    assert result.passed is True
+    assert result.repair_attempts == 1
+    assert gen.feedback[0].lower().startswith("database error: no such function")
+
+
+def test_execution_failure_without_repair_is_categorised(fixture_db_url: str) -> None:
+    class _ExecFail:
+        def generate(self, question, schema, max_rows):
+            return GeneratedSQL(question=question, sql="SELECT nosuchfunc(1) AS count FROM customers")
+
+    result = run_case(_case(), _factory(fixture_db_url, generator=_ExecFail()))
+
+    assert result.failure_category == FailureCategory.EXECUTION_FAILED
+    assert result.validation_passed is True
+    assert "no such function" in (result.error or "").lower()
+    assert "[SQL:" not in (result.error or "")
+
+
+def test_validation_failure_after_repairs_is_repair_failed(fixture_db_url: str) -> None:
+    class _AlwaysBad:
+        def generate(self, question, schema, max_rows):
+            return GeneratedSQL(question=question, sql="SELECT nope FROM customers")
+
+        def repair(self, question, schema, max_rows, previous_sql, validation):
+            return self.generate(question, schema, max_rows)
+
+    result = run_case(_case(), _factory(fixture_db_url, generator=_AlwaysBad()))
+
+    assert result.failure_category == FailureCategory.REPAIR_FAILED
+    assert result.repair_attempts == 2  # max_generation_attempts=3 by default
+    assert result.validation_errors == ["Unknown column: nope"]

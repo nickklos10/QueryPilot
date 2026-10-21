@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import TypeAdapter
+import sqlglot
+from sqlalchemy.engine import Engine
 
 from querypilot.access import AccessPolicy
-from querypilot.adapters.anthropic import anthropic_tools
-from querypilot.adapters.openai import openai_tools
+from querypilot.adapters.toolkit import QueryPilotToolkit
 from querypilot.audit import (
     AuditMetadata,
     AuditSink,
@@ -33,7 +35,10 @@ from querypilot.execution.formatter import explain_result
 from querypilot.execution.runner import execute
 from querypilot.generation.sql_generator import DemoSQLGenerator, SQLGenerator
 from querypilot.schema.enrich import enrich_schema
+from querypilot.schema.pruning import prune_schema, visible_schema
+from querypilot.schema.sampling import apply_samples, cached_samples
 from querypilot.schema.search import search_schema as search_schema_impl
+from querypilot.validation.feedback import clean_error, describe_db_error, repair_hints
 from querypilot.validation.validator import SQLValidator
 
 
@@ -57,7 +62,7 @@ class QueryPilot:
     @classmethod
     def connect(
         cls,
-        database_url: str,
+        database_url: str | Engine,
         dialect: str | None = None,
         readonly: bool = True,
         max_rows: int = 100,
@@ -78,7 +83,11 @@ class QueryPilot:
         schema_token_budget: int = 6000,
         engine_kwargs: dict[str, Any] | None = None,
     ) -> QueryPilot:
-        """Connect to any SQLAlchemy URL; the SQL dialect is inferred from it unless given."""
+        """Connect to a SQLAlchemy URL or ``Engine``; the SQL dialect is inferred from it unless given.
+
+        Drivers for databases other than SQLite and Postgres come from pip extras,
+        e.g. ``pip install "querypilot[duckdb]"``.
+        """
         resolved_dialect = normalize_dialect(dialect) if dialect else dialect_from_url(database_url)
         config = QueryPilotConfig(
             dialect=resolved_dialect,
@@ -123,15 +132,44 @@ class QueryPilot:
         return self.get_schema()
 
     def table_details(self, table_names: list[str]) -> list[TableSchema]:
-        """Return full table definitions (keys, comments, sample values) for the named tables."""
-        schema = self.get_schema()
+        """Return full table definitions (keys, comments, sample values) for the named tables.
+
+        Tables and columns hidden by the access policy are left out, and sample
+        values are only fetched for columns the policy lets the caller read
+        unmasked and unfiltered. The results are copies.
+        """
+        schema = self._visible_schema()
         tables = [schema.get_table(name) for name in table_names]
-        return [table for table in tables if table is not None]
+        return [self._with_samples(table) for table in tables if table is not None]
 
     def schema_for_prompt(self, question: str) -> DatabaseSchema:
-        """Return the schema context sent to the generator for this question."""
-        schema = self.get_schema()
-        return schema.model_copy(update={"hints": list(self.config.hints)})
+        """Return the schema context sent to the generator for this question.
+
+        The access-policy-visible schema, pruned to the tables relevant to the
+        question only when it exceeds ``schema_token_budget`` (keeping
+        foreign-key bridge tables), with sample values and ``config.hints``.
+        """
+        pruned = prune_schema(
+            self._visible_schema(),
+            question,
+            self.config.schema_token_budget,
+            sample_values=self.config.sample_values,
+        )
+        return pruned.model_copy(
+            update={
+                "tables": [self._with_samples(table) for table in pruned.tables],
+                "hints": list(self.config.hints),
+            }
+        )
+
+    def _visible_schema(self) -> DatabaseSchema:
+        return visible_schema(self.get_schema(), self.config)
+
+    def _with_samples(self, table: TableSchema) -> TableSchema:
+        if self.config.sample_values <= 0:
+            return table.model_copy(deep=True)
+        samples = cached_samples(self.connector, table, self.config.dialect, self.config)
+        return apply_samples(table, samples)
 
     def search_schema(self, query: str) -> list[SchemaMatch]:
         matches = search_schema_impl(self.get_schema(), query)
@@ -143,8 +181,10 @@ class QueryPilot:
         )
         return matches
 
-    def generate_sql(self, question: str) -> GeneratedSQL:
-        generated = self.generator.generate(question, self.get_schema(), self.config.max_rows)
+    def generate_sql(self, question: str, schema: DatabaseSchema | None = None) -> GeneratedSQL:
+        """Generate SQL for ``question`` from the prompt schema (see ``schema_for_prompt``)."""
+        context = schema if schema is not None else self.schema_for_prompt(question)
+        generated = self.generator.generate(question, context, self.config.max_rows)
         self._write_audit_record(
             operation="generate_sql",
             question=question,
@@ -202,37 +242,34 @@ class QueryPilot:
         return result
 
     def ask(self, question: str) -> QueryPilotAnswer:
-        generated = self.generate_sql(question)
-        validation: ValidationResult | None = None
+        """Generate, validate and run SQL for ``question``, repairing it when needed.
 
-        for attempt in range(self.config.max_generation_attempts):
-            if generated.sql is None:
-                details = "; ".join(generated.errors) or "no SQL was returned"
-                raise ValueError(f"Could not generate SQL: {details}")
-
-            validation = self.validate_sql(generated.sql)
-            if validation.valid and validation.rewritten_sql is not None:
-                break
-
-            can_repair = hasattr(self.generator, "repair")
-            if not can_repair or attempt >= self.config.max_generation_attempts - 1:
-                details = "; ".join(validation.errors) or "unknown validation error"
-                raise ValueError(f"SQL validation failed: {details}")
-
-            generated = self.generator.repair(  # type: ignore[attr-defined]
-                question,
-                self.get_schema(),
-                self.config.max_rows,
-                generated.sql,
-                validation,
+        Up to ``max_generation_attempts`` generations in total. A query that
+        fails validation is sent back with the cleaned errors and "did you
+        mean" hints; one that fails in the database is sent back with the
+        cleaned database error; one that returns no rows gets one review
+        asking to double-check filters and literals (if the model returns the
+        same SQL, the empty result stands). Generators without ``repair`` get a
+        single attempt. Raises ``ValueError`` with the last error on failure.
+        """
+        run = self._generate_and_run(question)
+        if run.error is not None or run.result is None or run.validation is None:
+            self._write_audit_record(
+                operation="ask",
+                question=question,
+                sql=run.sql,
+                rewritten_sql=run.validation.rewritten_sql if run.validation else None,
+                validation=run.validation,
+                valid=bool(run.validation and run.validation.valid),
+                executed=False,
+                access_policy=run.validation.access_policy if run.validation else {},
+                error=run.error,
             )
+            raise ValueError(run.error or "SQL validation failed: unknown validation error")
 
-        if validation is None or not validation.valid or validation.rewritten_sql is None:
-            raise ValueError("SQL validation failed: unknown validation error")
-
-        result = execute(self.connector, validation.rewritten_sql)
-        result.rows = self._apply_masking(result.rows, validation)
-        result.access_policy = validation.access_policy
+        generated = run.generated
+        validation = run.validation
+        result = run.result
         explanation = generated.explanation or explain_result(question, result.sql, result.rows)
         record = self._write_audit_record(
             operation="ask",
@@ -257,23 +294,125 @@ class QueryPilot:
             access_policy=validation.access_policy,
         )
 
+    def _generate_and_run(self, question: str) -> _GenerationRun:
+        """The generate -> validate -> execute -> repair loop shared by ``ask`` and evals.
+
+        Never raises for generation, validation or database errors; the
+        outcome (and per-stage timings) is reported on the returned run.
+        """
+        run = _GenerationRun()
+        max_attempts = self.config.max_generation_attempts
+        can_repair = callable(getattr(self.generator, "repair", None))
+        context = self.schema_for_prompt(question)
+        hint_schema = self._visible_schema()
+
+        started = time.perf_counter()
+        generated = self.generate_sql(question, schema=context)
+        run.generate_ms = _elapsed_ms(started)
+        run.generated = generated
+        attempts = 1
+        reviewed_empty = False
+        # A valid query that returned no rows, kept in case a later attempt fails.
+        empty_fallback: tuple[GeneratedSQL, ValidationResult, QueryResult] | None = None
+
+        while True:
+            if generated.sql is None:
+                details = "; ".join(clean_error(e) for e in generated.errors) or "no SQL was returned"
+                if run.failure is None:
+                    run.failure = "generation"
+                    run.error = f"Could not generate SQL: {details}"
+                break
+
+            sql = generated.sql
+            run.sql = sql
+            started = time.perf_counter()
+            validation = self.validate_sql(sql)
+            run.validate_ms += _elapsed_ms(started)
+            run.validation = validation
+
+            outcome: str
+            if not validation.valid or validation.rewritten_sql is None:
+                errors = [clean_error(error) for error in validation.errors]
+                details = "; ".join(errors) or "unknown validation error"
+                run.failure, run.error = "validation", f"SQL validation failed: {details}"
+                hints = repair_hints(validation.errors, hint_schema, sql)
+                feedback = errors + [f"Hint: {hint}" for hint in hints]
+                outcome = "validation"
+            else:
+                started = time.perf_counter()
+                try:
+                    result = self._execute_validated(validation)
+                except Exception as exc:  # noqa: BLE001 - database errors become feedback
+                    run.execute_ms += _elapsed_ms(started)
+                    lines = describe_db_error(exc, hint_schema, validation.rewritten_sql)
+                    run.failure = "execution"
+                    run.error = f"SQL execution failed: {lines[0].removeprefix('Database error: ')}"
+                    feedback = [lines[0], *(f"Hint: {hint}" for hint in lines[1:])]
+                    outcome = "execution"
+                else:
+                    run.execute_ms += _elapsed_ms(started)
+                    if result.row_count > 0 or reviewed_empty or not can_repair or attempts >= max_attempts:
+                        run.succeed(generated, validation, result)
+                        return run
+                    empty_fallback = (generated, validation, result)
+                    run.failure, run.error = None, None
+                    reviewed_empty = True
+                    feedback = [EMPTY_RESULT_FEEDBACK]
+                    outcome = "empty"
+
+            run.feedback.append(feedback)
+            if not can_repair or attempts >= max_attempts:
+                break
+
+            started = time.perf_counter()
+            generated = self.generator.repair(  # type: ignore[attr-defined]
+                question,
+                context,
+                self.config.max_rows,
+                sql,
+                validation.model_copy(update={"valid": False, "errors": feedback}),
+            )
+            run.repair_ms += _elapsed_ms(started)
+            run.repair_attempts += 1
+            attempts += 1
+            run.generated = generated
+            if outcome == "empty" and generated.sql is not None and _same_sql(
+                generated.sql, (sql, validation.rewritten_sql), self.config.dialect
+            ):
+                break
+
+        if empty_fallback is not None:
+            run.succeed(*empty_fallback)
+        return run
+
+    def _execute_validated(self, validation: ValidationResult) -> QueryResult:
+        assert validation.rewritten_sql is not None
+        result = execute(self.connector, validation.rewritten_sql)
+        result.rows = self._apply_masking(result.rows, validation)
+        result.access_policy = validation.access_policy
+        return result
+
+    def toolkit(self, **options: Any) -> QueryPilotToolkit:
+        """All agent tools (list_tables, describe_table, run_sql, ...) bound to this client.
+
+        Options are passed to ``QueryPilotToolkit``, e.g. ``include_ask=True``.
+        """
+        return QueryPilotToolkit(self, **options)
+
     def as_openai_tools(self) -> list[dict[str, Any]]:
-        return openai_tools()
+        return self.toolkit().openai_tools()
 
     def as_anthropic_tools(self) -> list[dict[str, Any]]:
-        return anthropic_tools()
+        return self.toolkit().anthropic_tools()
 
-    def handle_anthropic_tool_call(self, tool_name: str, tool_input: dict[str, Any]) -> Any:
-        if tool_name == "ask_database":
-            return self.ask(str(tool_input["question"])).model_dump()
-        if tool_name == "search_schema":
-            matches = self.search_schema(str(tool_input["query"]))
-            return TypeAdapter(list[SchemaMatch]).dump_python(matches)
-        if tool_name == "validate_sql":
-            return self.validate_sql(str(tool_input["sql"])).model_dump()
-        if tool_name == "execute_sql":
-            return self.execute_sql(str(tool_input["sql"])).model_dump()
-        raise ValueError(f"Unknown Anthropic tool: {tool_name}")
+    def handle_tool_call(
+        self, name: str, arguments: dict[str, Any] | str | None = None
+    ) -> dict[str, Any]:
+        """Run an OpenAI or Anthropic tool call; errors come back as ``{"ok": False, ...}``."""
+        return self.toolkit().dispatch(name, arguments)
+
+    def handle_anthropic_tool_call(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        return self.handle_tool_call(tool_name, tool_input)
 
     def get_audit_records(self, limit: int = 100) -> list[QueryAuditRecord]:
         return self.audit_sink.recent(limit)
@@ -327,3 +466,59 @@ def _mask_value(value: Any, mode: str) -> Any:
 
         return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
     return "[REDACTED]"
+
+
+EMPTY_RESULT_FEEDBACK = (
+    "The query ran without errors but returned no rows. Double-check the filters and "
+    "literal values against the stored values shown as e.g. samples in the schema "
+    "(spelling, case, date and number formats) and the join conditions. If no rows is "
+    "the correct answer, return the same query unchanged."
+)
+
+
+@dataclass
+class _GenerationRun:
+    """Outcome of ``QueryPilot._generate_and_run``."""
+
+    generated: GeneratedSQL | None = None
+    sql: str | None = None
+    validation: ValidationResult | None = None
+    result: QueryResult | None = None
+    # "generation", "validation" or "execution" when the run failed.
+    failure: str | None = None
+    error: str | None = None
+    repair_attempts: int = 0
+    # Feedback sent with each repair request, in order.
+    feedback: list[list[str]] = field(default_factory=list)
+    generate_ms: int = 0
+    validate_ms: int = 0
+    repair_ms: int = 0
+    execute_ms: int = 0
+
+    def succeed(
+        self, generated: GeneratedSQL, validation: ValidationResult, result: QueryResult
+    ) -> None:
+        self.generated = generated
+        self.sql = generated.sql
+        self.validation = validation
+        self.result = result
+        self.failure = None
+        self.error = None
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
+
+
+def _same_sql(candidate: str, previous: tuple[str | None, ...], dialect: str) -> bool:
+    """True when ``candidate`` is one of ``previous`` up to formatting."""
+    normalized = _normalize_sql(candidate, dialect)
+    return any(sql is not None and _normalize_sql(sql, dialect) == normalized for sql in previous)
+
+
+def _normalize_sql(sql: str, dialect: str) -> str:
+    text = sql.strip().rstrip(";").strip()
+    try:
+        return sqlglot.parse_one(text, read=dialect).sql(dialect=dialect, normalize=True)
+    except Exception:  # noqa: BLE001 - fall back to whitespace/case folding
+        return " ".join(text.lower().split())

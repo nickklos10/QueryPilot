@@ -153,8 +153,10 @@ def test_prompt_builder_scopes_schema_and_safety_rules(demo_db_url: str) -> None
         max_rows=25,
     )
 
-    assert "customers(id INTEGER" in prompt.user_prompt
-    assert "invoices(id INTEGER" in prompt.user_prompt
+    assert "CREATE TABLE customers (" in prompt.user_prompt
+    assert "id INTEGER PRIMARY KEY" in prompt.user_prompt
+    assert "CREATE TABLE invoices (" in prompt.user_prompt
+    assert "Write a single SQLite SELECT" in prompt.instructions
     assert "Return only JSON" in prompt.instructions
     assert "SELECT-only" in prompt.instructions
     assert "maximum row limit is 25" in prompt.instructions
@@ -260,6 +262,10 @@ def test_openai_compatible_generator_repairs_via_ask(demo_db_url: str) -> None:
 
     assert len(client.chat.completions.calls) == 2
     repair_call = client.chat.completions.calls[1]
-    assert "Repair" in repair_call["messages"][0]["content"]
+    assert "keep it if it is already correct" in repair_call["messages"][0]["content"]
+    repair_prompt = repair_call["messages"][1]["content"]
+    assert "Previous SQL:\nSELECT * FROM missing_table" in repair_prompt
+    assert "Unknown table: missing_table" in repair_prompt
+    assert "Available tables: customers, invoices" in repair_prompt
     assert answer.sql == "SELECT customer_name, revenue FROM customers ORDER BY revenue DESC LIMIT 2"
     assert answer.validation.valid is True

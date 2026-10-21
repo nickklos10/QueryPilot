@@ -36,3 +36,31 @@ def test_unsupported_offline_question_returns_structured_error(demo_db_url: str)
     generated = qp.generate_sql("What is the churn forecast after the pricing change?")
     assert generated.sql is None
     assert generated.errors
+
+
+def test_search_schema_matches_singular_question_words(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    assert qp.search_schema("revenue by customer")[0].table == "customers"
+    assert qp.search_schema("monthly invoice")[0].table == "invoices"
+
+
+def test_ask_uses_prompt_schema_with_samples_and_hints(demo_db_url: str) -> None:
+    seen = []
+
+    class _Recorder:
+        def generate(self, question, schema, max_rows):
+            seen.append(schema)
+            from querypilot.core.types import GeneratedSQL
+
+            return GeneratedSQL(question=question, sql="SELECT customer_name FROM customers")
+
+    qp = QueryPilot.connect(
+        demo_db_url, generator=_Recorder(), hints=["ARR is annual recurring revenue."]
+    )
+    qp.ask("customer names")
+
+    assert seen[0].hints == ["ARR is annual recurring revenue."]
+    assert "Acme Corp" in seen[0].get_table("customers").get_column("customer_name").sample_values
+    # The cached schema itself is not mutated with samples.
+    assert qp.get_schema().get_table("customers").get_column("customer_name").sample_values == []
