@@ -222,6 +222,7 @@ def test_function_allowlist_fails_closed() -> None:
     [
         "SELECT customer_name, COUNT(*) AS n FROM customers GROUP BY customer_name ORDER BY n DESC",
         "SELECT customer_name, SUM(revenue) AS rev FROM customers GROUP BY customer_name HAVING rev > 0",
+        "SELECT UPPER(customer_name) AS seg, COUNT(*) AS n FROM customers GROUP BY seg ORDER BY seg",
         "WITH big AS (SELECT customer_name, revenue FROM customers) SELECT customer_name FROM big",
         "WITH big AS (SELECT * FROM customers) SELECT b.arr FROM big AS b",
         "SELECT customer_name FROM customers UNION SELECT month FROM invoices",

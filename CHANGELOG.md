@@ -89,7 +89,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   naming the model and fall back to $0 (previously silent), while
   `LocalCostTracker` and `NullCostTracker` remain warning-free $0 by design.
 - The validator resolves columns through sqlglot's scope analysis, so common
-  read-only queries are no longer rejected: `ORDER BY` / `HAVING` on select
+  read-only queries are no longer rejected: `ORDER BY` / `HAVING` / `GROUP BY` on select
   aliases, CTEs (including recursive CTEs and CTE column lists), `UNION` /
   `INTERSECT` / `EXCEPT`, derived-table qualifiers, unqualified columns inside
   `IN (...)` subqueries, and joins nested in derived tables. CTE names are no

@@ -509,6 +509,11 @@ class _ScopeResolver:
                 return self._resolve_in_source(matches[0], name)
             if len(matches) > 1:
                 return _Resolution(error=f"Ambiguous column: {name}")
+            if current is scope and _is_group_by_alias(scope, column, name):
+                # Source columns win over select aliases in GROUP BY, so this is
+                # reached only when no source has the name; the alias's own
+                # expression is resolved with the projection.
+                return _Resolution()
 
         if qualifier is not None:
             return _Resolution(error=f"Unknown table qualifier: {column.table}")
@@ -647,6 +652,18 @@ def _own_columns(scope: Scope) -> list[exp.Column]:
         for column in scope.columns
         if column.find_ancestor(*_QUERY_TYPES) is scope.expression
     ]
+
+
+def _is_group_by_alias(scope: Scope, column: exp.Column, name: str) -> bool:
+    """Whether an unqualified GROUP BY column names one of this SELECT's aliases."""
+    group = column.find_ancestor(exp.Group)
+    if group is None or group.parent is not scope.expression:
+        return False
+    return any(
+        isinstance(projection, exp.Alias)
+        and _normalize_identifier(projection.alias).lower() == name
+        for projection in scope.expression.expressions
+    )
 
 
 def _selected_sources(scope: Scope) -> dict[str, exp.Table | Scope]:
