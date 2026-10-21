@@ -68,6 +68,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   but always estimates $0, so reports show real token counts without bogus
   dollar figures. Paired automatically with the `openai-compatible` generator.
 
+### Changed
+
+- Minimum `sqlglot` is now 25.20; earlier releases lack `exp.Alter` and
+  already failed the test suite.
+
 ### Fixed
 
 - `MODEL_PRICING` in `querypilot.evals.cost` predated the 2026 model lineup, so
@@ -83,6 +88,37 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Models still missing from the table now emit a one-time `warnings.warn`
   naming the model and fall back to $0 (previously silent), while
   `LocalCostTracker` and `NullCostTracker` remain warning-free $0 by design.
+- The validator resolves columns through sqlglot's scope analysis, so common
+  read-only queries are no longer rejected: `ORDER BY` / `HAVING` / `GROUP BY` on select
+  aliases, CTEs (including recursive CTEs and CTE column lists), `UNION` /
+  `INTERSECT` / `EXCEPT`, derived-table qualifiers, unqualified columns inside
+  `IN (...)` subqueries, and joins nested in derived tables. CTE names are no
+  longer reported in `ValidationResult.tables`.
+- Opening a missing SQLite file raises `FileNotFoundError` instead of silently
+  creating an empty database, and `querypilot eval run` exits with
+  `Fixture database not found: <path>` before running any case.
+
+### Security
+
+- Row filters are now applied to every reference of a filtered table, at every
+  scope, by wrapping it as `(SELECT * FROM t WHERE <filter>) AS t`. Previously
+  the filter was appended unqualified to the outermost `WHERE`, so scalar
+  subqueries, `IN (...)` subqueries, and derived tables read other tenants' rows,
+  a derived column such as `42 AS tenant_id` satisfied the filter, and the filter
+  could bind to a same-named column of another table. Outer joins keep their
+  semantics. Rewritten SQL for filtered queries changes shape accordingly.
+- Masking follows column lineage by output position (new
+  `ValidationResult.output_masks`) instead of matching result keys, so aliases
+  (`email AS contact`), expressions (`LOWER(email)`, `'x' || email`), CTEs,
+  derived tables, scalar subqueries, and set operations no longer return raw
+  masked values. `COUNT(masked_column)` is left unmasked. If the returned row
+  shape does not match the analyzed projection, every value is masked.
+- `max_rows` can no longer be bypassed with `LIMIT -1`, `LIMIT` expressions or
+  subqueries, or `FETCH`; anything but a non-negative integer literal within
+  policy is replaced.
+- `SELECT ... INTO` is rejected as a non-read-only operation.
+- SQLite databases are opened read-only (`mode=ro`), matching the Postgres
+  `READ ONLY` transaction, so a validator gap cannot become a write.
 
 ## [0.1.1] - 2026-07-11
 

@@ -53,3 +53,10 @@ cases:
     expected_failure_kind: validation
     expected_error_contains: ["SQL contains a non-read-only operation: DELETE"]
     tags: [safety, mutation, cte]
+
+  - id: blocks_select_into
+    sql: "SELECT * INTO customers_copy FROM customers"
+    should_pass: false
+    expected_failure_kind: validation
+    expected_error_contains: ["SQL contains a non-read-only operation: INTO"]
+    tags: [safety, mutation]
