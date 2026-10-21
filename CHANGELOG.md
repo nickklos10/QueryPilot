@@ -202,6 +202,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subqueries, or `FETCH`; anything but a non-negative integer literal within
   policy is replaced.
 - `SELECT ... INTO` is rejected as a non-read-only operation.
+- Table references that look like a file path or URL (DuckDB's
+  `FROM 'data.csv'` or `FROM 's3://b/x.parquet'`) are rejected. Previously they
+  were caught only as an unknown table, so a schema table named `csv` or
+  `parquet` let the file read through.
+- MySQL/MariaDB executable comments (`/*! ... */`, `/*M! ... */`) are rejected,
+  since the server runs their contents as SQL.
 - SQLite databases are opened read-only (`mode=ro`), matching the Postgres
   `READ ONLY` transaction, so a validator gap cannot become a write.
 
