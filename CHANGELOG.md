@@ -8,6 +8,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`querypilot proxy` (prototype).** A Postgres wire-protocol proxy that puts the
+  validator and access policy in front of a real database, so any client (psql,
+  drivers, ORMs, MCP database servers, BI tools) is protected unchanged. It
+  supports the simple and extended query protocols. Rewritten SQL runs in a READ
+  ONLY transaction, masks apply by output position, and rejections come back as
+  Postgres errors with the validator's message and hint. Every statement is
+  audited, and driver and catalog traffic passes through an allowlist. Install
+  with `querypilot[proxy]`. See `docs/proxy.md`. `JSONLAuditSink` takes
+  `max_cached` to bound its in-memory copy.
 - **Zero-config quickstart.** `querypilot demo` creates a demo database and runs
   a validated query. `querypilot schema`, `querypilot sql` and `querypilot ask`
   work against any `--db` URL. `querypilot init` writes a `querypilot.yaml`

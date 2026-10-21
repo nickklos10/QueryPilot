@@ -97,6 +97,43 @@ def main(argv: list[str] | None = None) -> int:
         "--port", type=int, default=_env_port(), help="Bind port for HTTP transports."
     )
 
+    proxy_parser = subparsers.add_parser(
+        "proxy", help="Run a Postgres wire-protocol proxy that enforces QueryPilot policies."
+    )
+    proxy_parser.add_argument(
+        "--upstream",
+        default=os.getenv("QUERYPILOT_PROXY_UPSTREAM"),
+        help="Postgres URL of the real database (default: database_url from the policy file).",
+    )
+    proxy_parser.add_argument(
+        "--listen",
+        default=os.getenv("QUERYPILOT_PROXY_LISTEN", "127.0.0.1:6543"),
+        help="HOST:PORT for clients to connect to (default: 127.0.0.1:6543).",
+    )
+    proxy_parser.add_argument(
+        "--policy",
+        default=os.getenv("QUERYPILOT_CONFIG"),
+        help="querypilot.yaml with the access policy (default: ./querypilot.yaml when present).",
+    )
+    proxy_parser.add_argument(
+        "--password",
+        default=os.getenv("QUERYPILOT_PROXY_PASSWORD"),
+        help="Password clients must send; required off loopback. Prefer QUERYPILOT_PROXY_PASSWORD.",
+    )
+    proxy_parser.add_argument(
+        "--audit-log",
+        default=os.getenv("QUERYPILOT_PROXY_AUDIT_LOG", "querypilot-proxy-audit.jsonl"),
+        help="JSONL file that receives one audit record per statement.",
+    )
+    proxy_parser.add_argument("--max-rows", type=int, default=None, help="Row cap (overrides the policy file).")
+    proxy_parser.add_argument("--timeout-seconds", type=int, default=None)
+    proxy_parser.add_argument(
+        "--no-catalog",
+        action="store_true",
+        help="Reject pg_catalog/information_schema queries (breaks psql \\d and ORM reflection).",
+    )
+    proxy_parser.add_argument("--verbose", "-v", action="store_true", help="Log every connection and statement.")
+
     eval_parser = subparsers.add_parser("eval", help="Eval-driven SQL reliability harness.")
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command", required=True)
 
@@ -163,6 +200,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "mcp":
         _mcp(args)
         return 0
+    if args.command == "proxy":
+        from querypilot.proxy.cli import run_proxy
+
+        return run_proxy(args)
     if args.command == "eval":
         if args.eval_command == "run":
             return _eval_run(args)

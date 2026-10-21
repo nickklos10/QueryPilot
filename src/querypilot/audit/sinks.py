@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 from typing import Protocol
 
@@ -26,9 +27,10 @@ class InMemoryAuditSink:
 
 
 class JSONLAuditSink:
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, max_cached: int | None = None) -> None:
         self.path = Path(path)
-        self._records: list[QueryAuditRecord] = []
+        # Long-running servers pass max_cached so the in-memory copy stays bounded.
+        self._records: deque[QueryAuditRecord] = deque(maxlen=max_cached)
 
     def write(self, record: QueryAuditRecord) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +40,7 @@ class JSONLAuditSink:
 
     def recent(self, limit: int = 100) -> list[QueryAuditRecord]:
         if self._records:
-            return list(reversed(self._records[-limit:]))
+            return list(reversed(list(self._records)[-limit:]))
         if not self.path.exists():
             return []
         lines = self.path.read_text(encoding="utf-8").splitlines()[-limit:]

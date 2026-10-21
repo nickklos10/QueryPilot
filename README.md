@@ -113,6 +113,28 @@ tools = as_langchain_tools(qp, naming="langchain")  # sql_db_list_tables, sql_db
 
 `naming="langchain"` reuses the tool names from the community `SQLDatabaseToolkit` (no longer maintained), so existing prompts keep working. Install the matching extra: `querypilot[langchain]`, `[llamaindex]`, `[openai-agents]`, `[claude-agent]` or `[mcp]`. See [`examples/07_frameworks.py`](examples/07_frameworks.py).
 
+## Protect any Postgres client: `querypilot proxy` (prototype)
+
+The proxy needs no SDK. It is a Postgres wire-protocol server that applies the same validator and access policy to every statement, whatever the client. That covers psql, psycopg, SQLAlchemy and LangChain, an existing MCP database server, Cursor or Claude Code, and BI tools. Point the client's connection string at the proxy instead of the database:
+
+```bash
+pip install "querypilot[proxy]"
+querypilot proxy --upstream postgresql://readonly@db/prod --listen 127.0.0.1:6543 --policy querypilot.yaml
+
+psql "postgresql://agent@127.0.0.1:6543/prod" -c "SELECT email FROM customers"
+npx -y @modelcontextprotocol/server-postgres postgresql://agent@127.0.0.1:6543/prod   # unchanged MCP server
+```
+
+Every statement then gets the following:
+
+- **Read-only enforcement.** Writes, DDL, COPY and `SET` of anything outside a small allowlist are rejected. Allowed statements run in a `READ ONLY` transaction on a session that defaults to read-only, so `COMMIT; DROP TABLE …` is rejected.
+- **Row filters and the row cap.** The rewritten SQL is what reaches the database, so the policy's `row_filters` hold under joins, subqueries and CTEs, and `LIMIT` is capped at `max_rows`.
+- **Masking.** `masking_rules` apply by output position, so `upper(email) AS contact` is masked too.
+- **Errors an agent can repair.** A rejection is a normal Postgres error with a SQLSTATE, the validator's message, and a `HINT`, for example `Column 'nope' does not exist. Columns of orders: id, customer_id, …`.
+- **Audit.** One JSONL record per statement goes to `--audit-log`, with the client's SQL, the SQL that ran, the row count, and the client user and application.
+
+Driver handshakes, `SET`/`SHOW` of formatting settings, and catalog queries for `psql \d` and ORM reflection pass through an allowlist. Catalog queries that could read data, such as `pg_stats` or `query_to_xml(...)`, are rejected. The policy file is a normal `querypilot.yaml`, and its `database_url` is used when you omit `--upstream`. Off loopback, set `QUERYPILOT_PROXY_PASSWORD`. Protocol coverage, known gaps (no TLS termination yet, no server-side cursors), and the reasons it fails closed are in [docs/proxy.md](docs/proxy.md).
+
 ## Better SQL from the model
 
 When QueryPilot writes the SQL itself (`ask`, `ask_database`, evals), it uses the techniques with the largest measured gains in the text-to-SQL literature. The sources and numbers are in [docs/research/developer-needs.md](docs/research/developer-needs.md).
