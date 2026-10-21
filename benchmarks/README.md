@@ -110,6 +110,8 @@ sed 's#^fixture_db: .*#fixture_db: sqlite:////tmp/saaspulse_wide.db#' \
 querypilot eval run --suite /tmp/natural_wide.yaml --generator anthropic --report wide.json
 ```
 
+Results from past comparisons live in [`results/`](results/).
+
 ## Running the model matrix
 
 Run the suite once per model, writing one `SuiteReport` JSON each, then aggregate
