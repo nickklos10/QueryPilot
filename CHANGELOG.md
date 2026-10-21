@@ -8,6 +8,57 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Zero-config quickstart.** `querypilot demo` creates a demo database and runs
+  a validated query. `querypilot schema`, `querypilot sql` and `querypilot ask`
+  work against any `--db` URL. `querypilot init` writes a `querypilot.yaml`
+  (connection, hints, descriptions, access policy, generator) that the CLI, the
+  servers and the new `QueryPilot.from_config()` all read.
+  `querypilot mcp-config <claude-code|claude-desktop|cursor|vscode|windsurf>`
+  prints a ready-to-paste MCP config that uses an absolute `uvx` path.
+  `python -m querypilot` works too.
+- **Connect any SQLAlchemy database.** `QueryPilot.connect(url)` infers the
+  sqlglot dialect from the URL or from an `Engine`. A new `SQLAlchemyConnector`
+  covers DuckDB, MySQL/MariaDB, SQL Server, Snowflake, BigQuery, Redshift, Trino,
+  Oracle, Databricks and ClickHouse; each has a pip extra, and a missing driver
+  raises an error that names the extra. Introspection now captures primary keys,
+  foreign keys, comments, views and non-default schemas (`schemas=`), and the
+  schema is cached (`refresh_schema()` re-reads it). Every query runs in a
+  rolled-back transaction, plus the engine's own read-only mode or timeout
+  where it has one. The default blocked functions now include DuckDB file
+  readers, MySQL `LOAD_FILE`/`SLEEP`, SQL Server `xp_cmdshell`/`OPENROWSET`,
+  SQLite `load_extension` and Postgres `lo_import`/`dblink`.
+- **One agent toolkit everywhere.** `QueryPilotToolkit` (`qp.toolkit()`)
+  provides `list_tables`, `describe_table`, `search_schema`, `validate_sql`,
+  `run_sql` and `ask_database`. Results are compact JSON with a `truncated`
+  flag, and errors come back as `{"ok": false, "error", "hints"}` payloads
+  instead of exceptions. The toolkit is exposed as OpenAI Chat and Responses
+  tools, Anthropic tools, `qp.handle_tool_call()`, an MCP server with
+  `readOnlyHint` annotations, LangChain tools (`naming="langchain"` gives
+  drop-in `sql_db_*` names), LlamaIndex, OpenAI Agents SDK, Claude Agent SDK
+  (in-process MCP server) and plain functions (`querypilot.integrations`).
+- **Grounded generation.** Prompts render compact DDL with primary keys,
+  foreign-key join paths, comments, up to 3 sample values per text column, and
+  business `hints=`/`descriptions=`. Sample values never come from blocked,
+  masked or row-filtered columns. Above `schema_token_budget`, only relevant
+  tables are sent, plus the FK bridge tables between them.
+- **Repair that converges.** Validation errors carry "did you mean"
+  suggestions; database errors are cleaned and fed back; an empty result gets
+  one gentle review. `ask()` and the eval pipeline share one loop, and the
+  default is now 3 attempts.
+- Research and roadmap: `docs/research/developer-needs.md` (about 250 sourced
+  developer pain points) and `docs/roadmap.md`.
+- Behaviour changes:
+  - `QueryPilot.connect` no longer defaults to `dialect="sqlite"`; it infers
+    the dialect, so `postgresql://` URLs no longer build a SQLite connector.
+  - `handle_anthropic_tool_call` returns error payloads instead of raising.
+  - Advertised tool lists replace `execute_sql` with `run_sql`; `execute_sql`
+    still dispatches as an alias.
+  - Execution failures in `ask()` raise `ValueError("SQL execution failed: ...")`.
+  - The MCP server runs on mcp 2.x (`MCPServer`) as well as 1.x. With mcp 2.x,
+    importing `mcp.server.fastmcp` failed.
+  - The MCP registry entry installs `querypilot[mcp]`. PyYAML is now a core
+    dependency, for `querypilot.yaml`.
+
 - `ComparisonConfig.ignore_column_names` (suite-YAML-settable) — compare
   candidate results to gold by **values only**, ignoring the column aliases the
   model chose (Spider/BIRD "execution accuracy"). Column count must still match;

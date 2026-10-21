@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import sqlglot
@@ -119,6 +120,19 @@ class QueryPilot:
             audit_sink=audit_sink,
             audit_metadata=audit_metadata,
         )
+
+    @classmethod
+    def from_config(cls, path: str | Path | None = None, **overrides: Any) -> QueryPilot:
+        """Connect using a querypilot.yaml project config (default: ./querypilot.yaml).
+
+        Keyword overrides take precedence over the file, e.g. ``generator=`` or ``max_rows=``.
+        """
+        from querypilot.project import connect_project, find_config, load_project_config
+
+        config_path = Path(path) if path is not None else find_config()
+        if config_path is None:
+            raise FileNotFoundError("No querypilot.yaml found; run `querypilot init` to create one.")
+        return connect_project(load_project_config(config_path), **overrides)
 
     def get_schema(self) -> DatabaseSchema:
         """Return the introspected schema, cached after the first call."""

@@ -310,7 +310,8 @@ def _render_table_details(table: dict[str, Any]) -> str:
             parts.append("e.g. " + ", ".join(repr(value) for value in column["sample_values"]))
         lines.append(" ".join(parts))
     for foreign_key in table.get("foreign_keys", []):
-        lines.append(f"  FK {foreign_key}")
+        columns = ", ".join(foreign_key.get("columns", []))
+        lines.append(f"  FK {columns} -> {foreign_key.get('references')}")
     return "\n".join(lines) + "\n"
 
 

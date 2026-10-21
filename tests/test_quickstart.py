@@ -174,3 +174,17 @@ def test_mcp_config_makes_relative_sqlite_paths_absolute(tmp_path: Path, monkeyp
 
     url = json.loads(capsys.readouterr().out)["mcpServers"]["querypilot"]["env"]["QUERYPILOT_DATABASE_URL"]
     assert url == f"sqlite:///{(tmp_path / 'data' / 'app.db').resolve()}"
+
+
+def test_from_config_reads_project_file(demo_url: str, tmp_path: Path, monkeypatch) -> None:
+    from querypilot import QueryPilot
+
+    (tmp_path / "querypilot.yaml").write_text(f"database_url: {demo_url}\nmax_rows: 3\nhints: [x]\n")
+    monkeypatch.chdir(tmp_path)
+
+    qp = QueryPilot.from_config(max_rows=4)
+
+    assert qp.config.max_rows == 4
+    assert qp.config.hints == ["x"]
+    with pytest.raises(FileNotFoundError):
+        QueryPilot.from_config(tmp_path / "missing.yaml")
