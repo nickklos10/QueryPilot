@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from querypilot.access import AccessPolicy
-from querypilot.core.safety_defaults import BLOCKED_POSTGRES_FUNCTIONS
+from querypilot.core.safety_defaults import DEFAULT_BLOCKED_FUNCTIONS
 
 
 class SafetyPolicy(BaseModel):
@@ -12,7 +12,7 @@ class SafetyPolicy(BaseModel):
     reject_multi_statement: bool = True
     warn_on_select_star: bool = True
     blocked_functions: list[str] = Field(
-        default_factory=lambda: sorted(BLOCKED_POSTGRES_FUNCTIONS)
+        default_factory=lambda: sorted(DEFAULT_BLOCKED_FUNCTIONS)
     )
     allowed_functions: list[str] | None = None
 

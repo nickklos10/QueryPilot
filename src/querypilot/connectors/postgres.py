@@ -1,31 +1,38 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import Engine
+from typing import Any
+
+from sqlalchemy import text
+from sqlalchemy.engine import URL, Engine
 
 from querypilot.connectors.base import BaseConnector
-from querypilot.core.types import ColumnSchema, DatabaseSchema, TableSchema
+from querypilot.connectors.sqlalchemy import build_engine
+from querypilot.core.types import DatabaseSchema
 
 
 class PostgresConnector(BaseConnector):
-    def __init__(self, database_url: str, timeout_seconds: int = 10) -> None:
-        super().__init__(database_url, timeout_seconds)
-        self.engine: Engine = create_engine(_normalize_postgres_url(database_url))
+    def __init__(
+        self,
+        database_url: str | URL | Engine,
+        timeout_seconds: int = 10,
+        *,
+        schemas: list[str] | None = None,
+        engine_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        if isinstance(database_url, Engine):
+            self.engine: Engine = database_url
+            display_url = database_url.url.render_as_string(hide_password=True)
+        else:
+            url = database_url if isinstance(database_url, str) else database_url.render_as_string(False)
+            self.engine = build_engine(_normalize_postgres_url(url), engine_kwargs)
+            display_url = str(database_url)
+        super().__init__(display_url, timeout_seconds)
+        self.schemas = schemas
 
     def get_schema(self) -> DatabaseSchema:
-        inspector = inspect(self.engine)
-        tables: list[TableSchema] = []
-        for table_name in inspector.get_table_names():
-            columns = [
-                ColumnSchema(
-                    name=column["name"],
-                    type=str(column["type"]),
-                    nullable=bool(column.get("nullable", True)),
-                )
-                for column in inspector.get_columns(table_name)
-            ]
-            tables.append(TableSchema(name=table_name, columns=columns))
-        return DatabaseSchema(dialect="postgres", tables=tables)
+        from querypilot.schema.introspector import introspect_engine
+
+        return introspect_engine(self.engine, "postgres", self.schemas)
 
     def execute_readonly(self, sql: str) -> tuple[list[dict], int]:
         with self.engine.connect() as conn:

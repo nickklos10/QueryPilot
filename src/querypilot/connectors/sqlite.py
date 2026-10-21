@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from querypilot.connectors.base import BaseConnector
-from querypilot.core.types import ColumnSchema, DatabaseSchema, TableSchema
+from querypilot.core.types import DatabaseSchema
 
 
 class SQLiteConnector(BaseConnector):
@@ -13,19 +13,9 @@ class SQLiteConnector(BaseConnector):
         self.engine: Engine = create_engine(database_url)
 
     def get_schema(self) -> DatabaseSchema:
-        inspector = inspect(self.engine)
-        tables: list[TableSchema] = []
-        for table_name in inspector.get_table_names():
-            columns = [
-                ColumnSchema(
-                    name=column["name"],
-                    type=str(column["type"]),
-                    nullable=bool(column.get("nullable", True)),
-                )
-                for column in inspector.get_columns(table_name)
-            ]
-            tables.append(TableSchema(name=table_name, columns=columns))
-        return DatabaseSchema(dialect="sqlite", tables=tables)
+        from querypilot.schema.introspector import introspect_engine
+
+        return introspect_engine(self.engine, "sqlite")
 
     def execute_readonly(self, sql: str) -> tuple[list[dict], int]:
         with self.engine.connect() as conn:
