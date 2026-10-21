@@ -83,6 +83,8 @@ class ValidationResult(BaseModel):
     policy_checks: list[PolicyCheck] = Field(default_factory=list)
     query_fingerprint: str | None = None
     access_policy: dict = Field(default_factory=dict)
+    # Masking mode for each output column, by position (None means unmasked).
+    output_masks: list[str | None] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 

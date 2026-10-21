@@ -10,6 +10,7 @@ import sqlglot
 from sqlalchemy.engine import Engine
 
 from querypilot.access import AccessPolicy
+from querypilot.access.policy import MASK_STRENGTH
 from querypilot.adapters.toolkit import QueryPilotToolkit
 from querypilot.audit import (
     AuditMetadata,
@@ -507,24 +508,26 @@ class QueryPilot:
         return record
 
     def _apply_masking(self, rows: list[dict], validation: ValidationResult) -> list[dict]:
-        if not rows or not self.config.access_policy.masking_rules:
+        masks = validation.output_masks
+        if not rows or not any(masks):
             return rows
 
-        rules: dict[str, str] = {}
-        for table_name in validation.tables:
-            for column_name, rule in self.config.access_policy.masking_rules.get(table_name, {}).items():
-                rules[column_name] = rule.mode
-
-        if not rules:
-            return rows
-
-        return [
-            {
-                key: _mask_value(value, rules[key]) if key in rules else value
-                for key, value in row.items()
-            }
-            for row in rows
-        ]
+        # Masks follow column lineage by position, so aliases and expressions
+        # over a masked column are masked too. If the row shape does not match
+        # the analyzed projection, mask every value rather than guess.
+        strongest = min((mode for mode in masks if mode), key=MASK_STRENGTH.__getitem__)
+        masked_rows = []
+        for row in rows:
+            if len(row) != len(masks):
+                masked_rows.append({key: _mask_value(value, strongest) for key, value in row.items()})
+                continue
+            masked_rows.append(
+                {
+                    key: _mask_value(value, mode) if mode else value
+                    for (key, value), mode in zip(row.items(), masks)
+                }
+            )
+        return masked_rows
 
 
 def _mask_value(value: Any, mode: str) -> Any:

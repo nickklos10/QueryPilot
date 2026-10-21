@@ -215,3 +215,109 @@ def test_function_allowlist_fails_closed() -> None:
 
     assert result.valid is False
     assert result.blocked_reason == "SQL function is not allowed by policy: lower"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT customer_name, COUNT(*) AS n FROM customers GROUP BY customer_name ORDER BY n DESC",
+        "SELECT customer_name, SUM(revenue) AS rev FROM customers GROUP BY customer_name HAVING rev > 0",
+        "SELECT UPPER(customer_name) AS seg, COUNT(*) AS n FROM customers GROUP BY seg ORDER BY seg",
+        "WITH big AS (SELECT customer_name, revenue FROM customers) SELECT customer_name FROM big",
+        "WITH big AS (SELECT * FROM customers) SELECT b.arr FROM big AS b",
+        "SELECT customer_name FROM customers UNION SELECT month FROM invoices",
+        "SELECT customer_name FROM customers UNION ALL SELECT month FROM invoices ORDER BY 1",
+        "SELECT t.seg FROM (SELECT customer_name AS seg FROM customers) AS t",
+        "SELECT revenue FROM invoices WHERE customer_id IN (SELECT id FROM customers)",
+        (
+            "SELECT c.customer_name FROM customers AS c WHERE EXISTS "
+            "(SELECT 1 FROM invoices AS i WHERE i.customer_id = c.id)"
+        ),
+        "SELECT customer_name, RANK() OVER (ORDER BY revenue DESC) AS r FROM customers",
+        "WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT n FROM r",
+        (
+            "SELECT t.customer_name FROM (SELECT c.customer_name, i.revenue FROM customers AS c "
+            "JOIN invoices AS i ON i.customer_id = c.id) AS t"
+        ),
+    ],
+)
+def test_common_read_only_query_shapes_are_accepted(demo_db_url: str, sql: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    result = qp.validate_sql(sql)
+
+    assert result.errors == []
+    assert result.valid is True
+    qp.execute_sql(sql)
+
+
+@pytest.mark.parametrize(
+    ("sql", "error"),
+    [
+        ("WITH big AS (SELECT customer_name FROM customers) SELECT revenue FROM big", "Unknown column: revenue"),
+        ("WITH big AS (SELECT missing FROM customers) SELECT * FROM big", "Unknown column: missing"),
+        ("SELECT t.nope FROM (SELECT customer_name FROM customers) AS t", "Unknown column: nope"),
+        ("SELECT z.customer_name FROM customers AS c", "Unknown table qualifier: z"),
+        ("SELECT customer_name FROM customers UNION SELECT missing FROM invoices", "Unknown column: missing"),
+        ("WITH big AS (SELECT * FROM payments) SELECT * FROM big", "Unknown table: payments"),
+    ],
+)
+def test_scope_aware_resolution_still_fails_closed(demo_db_url: str, sql: str, error: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    result = qp.validate_sql(sql)
+
+    assert result.valid is False
+    assert error in result.errors
+
+
+def test_cte_column_list_names_recursive_cte_outputs(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    result = qp.validate_sql(
+        "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT n FROM r"
+    )
+
+    assert result.errors == []
+    assert result.tables == []
+
+
+def test_cte_names_are_not_reported_as_tables(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite")
+
+    result = qp.validate_sql(
+        "WITH big AS (SELECT customer_name FROM customers) SELECT customer_name FROM big"
+    )
+
+    assert result.tables == ["customers"]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT id FROM invoices LIMIT -1",
+        "SELECT id FROM invoices LIMIT 1000 + 1000",
+        "SELECT id FROM invoices LIMIT (SELECT 5000)",
+        "SELECT id FROM invoices UNION ALL SELECT id FROM customers",
+        "SELECT id FROM invoices UNION ALL SELECT id FROM customers LIMIT 500",
+    ],
+)
+def test_row_limit_cannot_be_bypassed(demo_db_url: str, sql: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, dialect="sqlite", max_rows=2)
+
+    result = qp.execute_sql(sql)
+
+    assert result.row_count <= 2
+    assert result.sql.endswith("LIMIT 2")
+
+
+def test_select_into_is_rejected() -> None:
+    validator = SQLValidator(QueryPilotConfig(dialect="postgres"))
+
+    result = validator.validate(
+        "SELECT * INTO stolen FROM customers",
+        DatabaseSchema(dialect="postgres"),
+    )
+
+    assert result.valid is False
+    assert result.blocked_reason == "SQL contains a non-read-only operation: INTO"

@@ -9,6 +9,10 @@ class MaskingRule(BaseModel):
     mode: Literal["redact", "null", "hash"] = "redact"
 
 
+# Lower is stricter; when several masked columns feed one output, the strictest wins.
+MASK_STRENGTH = {"null": 0, "redact": 1, "hash": 2}
+
+
 class AccessPolicy(BaseModel):
     allowed_columns: dict[str, list[str]] = Field(default_factory=dict)
     blocked_columns: dict[str, list[str]] = Field(default_factory=dict)

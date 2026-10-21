@@ -196,6 +196,16 @@ def test_eval_run_missing_suite_file_raises_systemexit(
         )
 
 
+def test_eval_run_missing_fixture_db_exits_without_creating_it(tmp_path: Path) -> None:
+    missing = tmp_path / "suites" / "nope.db"
+    suite = _smoke_suite(tmp_path, missing)
+
+    with pytest.raises(SystemExit, match="Fixture database not found"):
+        cli_main(["eval", "run", "--suite", str(suite), "--generator", "demo"])
+
+    assert not missing.exists()
+
+
 def test_eval_run_invalid_generator_choice_exits(
     tmp_path: Path, fixture_db_path: Path
 ) -> None:

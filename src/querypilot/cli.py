@@ -472,6 +472,10 @@ def _eval_run(args: argparse.Namespace) -> int:
             "--database-url is required when the suite does not declare fixture_db."
         )
 
+    _require_sqlite_fixtures(
+        case.fixture_db or args.database_url or suite.fixture_db or "" for case in suite.cases
+    )
+
     generator = build_generator(args.generator, model=args.model, base_url=args.base_url)
     tracker_factory = build_cost_tracker_factory(args.generator)
     qp_factory = build_qp_factory(
@@ -497,6 +501,20 @@ def _eval_run(args: argparse.Namespace) -> int:
 
     print(render_terminal(report, color=not args.no_color))
     return 0
+
+
+def _require_sqlite_fixtures(database_urls) -> None:
+    from querypilot.connectors.sqlite import sqlite_database_path
+
+    for url in dict.fromkeys(database_urls):
+        if not url.startswith("sqlite"):
+            continue
+        path = sqlite_database_path(url)
+        if path is not None and not path.exists():
+            raise SystemExit(
+                f"Fixture database not found: {path}\n"
+                "Relative sqlite:/// paths in a suite resolve against the suite file's directory."
+            )
 
 
 def _eval_check(args: argparse.Namespace) -> int:
