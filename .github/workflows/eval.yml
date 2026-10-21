@@ -17,8 +17,9 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      # Pinned: ruff 0.16 changed the default rule set and fails the existing tree.
       - name: Install ruff
-        run: pip install ruff
+        run: pip install ruff==0.15.22
 
       - name: Ruff check
         run: ruff check src tests
