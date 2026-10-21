@@ -1,0 +1,891 @@
+# SaaSPulse native benchmark — NATURAL-PHRASING correctness cases.
+#
+# Same 65 cases, ids, gold SQL and fixture as correctness.yaml, but each
+# question is reworded the way a business user or analyst would ask it: no
+# snake_case column names and no quoted storage literals ("accounts that
+# churned", "invoices marked as paid", "urgent support tickets"). Every fact
+# needed to reach the gold result is still inferable from the question plus the
+# schema and data, and every question still pins down which values are returned,
+# the ordering (with tie-breakers), any row limit, and units (cents).
+#
+# Because the questions no longer dictate output aliases, comparison uses
+# ignore_column_names: true (values only; column count must still match).
+#
+# Load this file on its own (load_suite / --suite benchmarks/saaspulse/natural.yaml).
+# It reuses correctness.yaml's case ids and a different comparison block, so it
+# cannot be merged with the other files in a suite-directory run.
+name: saaspulse_natural
+fixture_db: sqlite:///../fixtures/saaspulse.db
+fixture_dialect: sqlite
+
+thresholds:
+  safety_pass_rate: 1.0
+  correctness_rate: 0.5
+  max_p95_latency_ms: 15000
+
+comparison:
+  ignore_row_order: true
+  ignore_column_order: true
+  float_tolerance: 0.001
+  normalize_datetimes: true
+  case_insensitive_strings: false
+  ignore_column_names: true
+
+cases:
+  # ---------------------------------------------------------------------------
+  # EASY — single-table filters, projections, and simple aggregates
+  # ---------------------------------------------------------------------------
+  - id: easy_account_count
+    question: >
+      How many customer accounts do we have in total, churned ones included?
+      Just the number.
+    gold_sql: |
+      SELECT COUNT(*) AS total_accounts
+      FROM accounts
+    tags: [easy, aggregation, accounts, natural]
+
+  - id: easy_active_account_count
+    question: >
+      How many of our customer accounts are currently active, i.e. have not
+      churned? Just the count.
+    gold_sql: |
+      SELECT COUNT(*) AS active_accounts
+      FROM accounts
+      WHERE is_active = 1
+    tags: [easy, filter, accounts, natural]
+
+  - id: easy_churned_accounts
+    question: >
+      Which accounts have churned? Give each churned account's ID and name,
+      sorted by account ID.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE churned_date IS NOT NULL
+      ORDER BY account_id ASC
+    tags: [easy, filter, null_handling, accounts, natural]
+
+  - id: easy_enterprise_accounts
+    question: >
+      Show me the ID and name of every account in the enterprise customer
+      segment, sorted by account ID.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE segment = 'enterprise'
+      ORDER BY account_id ASC
+    tags: [easy, filter, accounts, natural]
+
+  - id: easy_us_accounts_count
+    question: >
+      How many of our accounts are based in the United States? Just the number.
+    gold_sql: |
+      SELECT COUNT(*) AS us_accounts
+      FROM accounts
+      WHERE country = 'US'
+    tags: [easy, filter, accounts, natural]
+
+  - id: easy_accounts_by_segment
+    question: >
+      Break our accounts down by customer segment: each segment and how many
+      accounts it has, biggest segment first, ties broken alphabetically by
+      segment.
+    gold_sql: |
+      SELECT segment, COUNT(*) AS account_count
+      FROM accounts
+      GROUP BY segment
+      ORDER BY account_count DESC, segment ASC
+    tags: [easy, group_by, accounts, natural]
+
+  - id: easy_accounts_by_country
+    question: >
+      How many accounts do we have in each country? Show the country code and
+      the number of accounts, sorted alphabetically by country code.
+    gold_sql: |
+      SELECT country, COUNT(*) AS account_count
+      FROM accounts
+      GROUP BY country
+      ORDER BY country ASC
+    tags: [easy, group_by, accounts, natural]
+
+  - id: easy_distinct_industries
+    question: >
+      How many different industries do our customer accounts come from? Just the
+      number.
+    gold_sql: |
+      SELECT COUNT(DISTINCT industry) AS distinct_industries
+      FROM accounts
+    tags: [easy, aggregation, accounts, natural]
+
+  - id: easy_active_plans
+    question: >
+      Which subscription plans are still being offered (not retired)? Give each
+      plan's ID and name, ordered by plan ID.
+    gold_sql: |
+      SELECT plan_id, plan_name
+      FROM plans
+      WHERE is_active = 1
+      ORDER BY plan_id ASC
+    tags: [easy, filter, plans, natural]
+
+  - id: easy_free_plans
+    question: >
+      Which plans are free, costing nothing per month? Give each plan's ID and
+      name, ordered by plan ID.
+    gold_sql: |
+      SELECT plan_id, plan_name
+      FROM plans
+      WHERE monthly_price_cents = 0
+      ORDER BY plan_id ASC
+    tags: [easy, filter, plans, edge_case, natural]
+
+  - id: easy_admin_users_count
+    question: >
+      How many users have the admin role, counting every user whether active or
+      not? Just the number.
+    gold_sql: |
+      SELECT COUNT(*) AS admin_users
+      FROM users
+      WHERE role = 'admin'
+    tags: [easy, filter, users, natural]
+
+  - id: easy_users_never_logged_in
+    question: >
+      How many users have never logged in, counting every user whether active or
+      not? Just the number.
+    gold_sql: |
+      SELECT COUNT(*) AS never_logged_in
+      FROM users
+      WHERE last_login_at IS NULL
+    tags: [easy, filter, null_handling, users, natural]
+
+  - id: easy_users_by_role
+    question: >
+      How many users do we have in each role (all users, active or not)? Show
+      the role and its user count, most common role first, ties broken
+      alphabetically by role.
+    gold_sql: |
+      SELECT role, COUNT(*) AS user_count
+      FROM users
+      GROUP BY role
+      ORDER BY user_count DESC, role ASC
+    tags: [easy, group_by, users, natural]
+
+  - id: easy_paid_invoices_count
+    question: >
+      How many invoices are marked as paid? Just the number.
+    gold_sql: |
+      SELECT COUNT(*) AS paid_invoices
+      FROM invoices
+      WHERE status = 'paid'
+    tags: [easy, filter, invoices, natural]
+
+  - id: easy_zero_amount_invoices
+    question: >
+      How many invoices were issued for an amount of exactly zero, in any
+      currency? Just the number.
+    gold_sql: |
+      SELECT COUNT(*) AS zero_amount_invoices
+      FROM invoices
+      WHERE amount_cents = 0
+    tags: [easy, filter, invoices, edge_case, natural]
+
+  - id: easy_invoices_by_status
+    question: >
+      Give me a breakdown of invoices by status: each status and how many
+      invoices have it, most common first, ties broken alphabetically by status.
+    gold_sql: |
+      SELECT status, COUNT(*) AS invoice_count
+      FROM invoices
+      GROUP BY status
+      ORDER BY invoice_count DESC, status ASC
+    tags: [easy, group_by, invoices, natural]
+
+  - id: easy_total_paid_amount
+    question: >
+      What is the combined amount of all invoices marked as paid, in cents,
+      adding up the raw amounts regardless of currency? Just the one number.
+    gold_sql: |
+      SELECT SUM(amount_cents) AS total_paid_cents
+      FROM invoices
+      WHERE status = 'paid'
+    tags: [easy, aggregation, invoices, natural]
+
+  - id: easy_open_invoices
+    question: >
+      List the first 50 invoices that are still open, by invoice ID ascending:
+      the invoice ID and the invoice amount in cents.
+    gold_sql: |
+      SELECT invoice_id, amount_cents
+      FROM invoices
+      WHERE status = 'open'
+      ORDER BY invoice_id ASC
+      LIMIT 50
+    tags: [easy, filter, invoices, natural]
+
+  - id: easy_active_subscriptions_count
+    question: >
+      How many subscriptions are currently active? Count only subscriptions in
+      active status, not ones that are trialing, past due or cancelled. Just the
+      number.
+    gold_sql: |
+      SELECT COUNT(*) AS active_subscriptions
+      FROM subscriptions
+      WHERE status = 'active'
+    tags: [easy, filter, subscriptions, natural]
+
+  - id: easy_subscriptions_by_status
+    question: >
+      How many subscriptions are in each status? Show the status and its
+      subscription count, ordered alphabetically by status.
+    gold_sql: |
+      SELECT status, COUNT(*) AS subscription_count
+      FROM subscriptions
+      GROUP BY status
+      ORDER BY status ASC
+    tags: [easy, group_by, subscriptions, natural]
+
+  - id: easy_avg_seats
+    question: >
+      On average, how many seats does a subscription have, across every
+      subscription we have ever had (cancelled ones included)? Just the average.
+    gold_sql: |
+      SELECT AVG(seats) AS avg_seats
+      FROM subscriptions
+    tags: [easy, aggregation, subscriptions, natural]
+
+  - id: easy_max_mrr
+    question: >
+      What is the highest monthly recurring revenue of any single subscription,
+      in cents, looking at all subscriptions including cancelled ones? Just the
+      number.
+    gold_sql: |
+      SELECT MAX(mrr_cents) AS max_mrr_cents
+      FROM subscriptions
+    tags: [easy, aggregation, subscriptions, natural]
+
+  - id: easy_open_tickets
+    question: >
+      How many support tickets are still open, i.e. have not been closed yet?
+      Just the number.
+    gold_sql: |
+      SELECT COUNT(*) AS open_tickets
+      FROM support_tickets
+      WHERE closed_at IS NULL
+    tags: [easy, filter, null_handling, support, natural]
+
+  - id: easy_tickets_by_priority
+    question: >
+      How many support tickets do we have at each priority level? Show the
+      priority and its ticket count, most tickets first, ties broken
+      alphabetically by priority.
+    gold_sql: |
+      SELECT priority, COUNT(*) AS ticket_count
+      FROM support_tickets
+      GROUP BY priority
+      ORDER BY ticket_count DESC, priority ASC
+    tags: [easy, group_by, support, natural]
+
+  - id: easy_urgent_tickets
+    question: >
+      Show the first 50 urgent support tickets by ticket ID: the ticket ID and
+      the ticket's category.
+    gold_sql: |
+      SELECT ticket_id, category
+      FROM support_tickets
+      WHERE priority = 'urgent'
+      ORDER BY ticket_id ASC
+      LIMIT 50
+    tags: [easy, filter, support, natural]
+
+  - id: easy_usage_by_type
+    question: >
+      For each kind of product usage event, what is the total usage volume
+      (adding up the per-record event counts)? Show the event type and its
+      total, highest first, ties broken alphabetically by event type.
+    gold_sql: |
+      SELECT event_type, SUM(event_count) AS total_events
+      FROM usage_events
+      GROUP BY event_type
+      ORDER BY total_events DESC, event_type ASC
+    tags: [easy, group_by, usage, natural]
+
+  # ---------------------------------------------------------------------------
+  # MEDIUM — joins, group-by, and HAVING
+  # ---------------------------------------------------------------------------
+  - id: med_mrr_by_plan
+    question: >
+      What is the total monthly recurring revenue in cents for each plan, summed
+      over every subscription ever on that plan (cancelled, trialing and
+      past-due ones included)? Show the plan name and the total, highest first,
+      ties broken by plan name A-Z.
+    gold_sql: |
+      SELECT p.plan_name, SUM(s.mrr_cents) AS total_mrr_cents
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      GROUP BY p.plan_name
+      ORDER BY total_mrr_cents DESC, p.plan_name ASC
+    tags: [medium, join, group_by, subscriptions, natural]
+
+  - id: med_active_mrr_by_plan
+    question: >
+      Looking only at active subscriptions (not trialing, past due or
+      cancelled), what is the total monthly recurring revenue in cents for each
+      plan that has any? Show the plan name and the total, highest first, ties
+      broken by plan name A-Z.
+    gold_sql: |
+      SELECT p.plan_name, SUM(s.mrr_cents) AS active_mrr_cents
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      WHERE s.status = 'active'
+      GROUP BY p.plan_name
+      ORDER BY active_mrr_cents DESC, p.plan_name ASC
+    tags: [medium, join, group_by, filter, subscriptions, natural]
+
+  - id: med_subs_count_by_segment
+    question: >
+      How many subscriptions, of any status, belong to accounts in each customer
+      segment? Show the segment and the subscription count, highest first, ties
+      broken by segment A-Z.
+    gold_sql: |
+      SELECT a.segment, COUNT(*) AS subscription_count
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      GROUP BY a.segment
+      ORDER BY subscription_count DESC, a.segment ASC
+    tags: [medium, join, group_by, subscriptions, natural]
+
+  - id: med_invoiced_by_segment
+    question: >
+      What is the total invoiced amount per customer segment, in cents, over all
+      invoices regardless of status, adding raw amounts regardless of currency?
+      Show the segment and the total, largest first, ties broken by segment A-Z.
+    gold_sql: |
+      SELECT a.segment, SUM(i.amount_cents) AS total_amount_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      GROUP BY a.segment
+      ORDER BY total_amount_cents DESC, a.segment ASC
+    tags: [medium, join, group_by, invoices, natural]
+
+  - id: med_paid_by_country
+    question: >
+      For invoices marked as paid, what is the total amount per customer
+      country, in cents, adding raw amounts regardless of currency? Show the
+      country code and the total, largest first, ties broken by country code
+      A-Z.
+    gold_sql: |
+      SELECT a.country, SUM(i.amount_cents) AS paid_amount_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      WHERE i.status = 'paid'
+      GROUP BY a.country
+      ORDER BY paid_amount_cents DESC, a.country ASC
+    tags: [medium, join, group_by, filter, invoices, natural]
+
+  - id: med_top_accounts_by_paid
+    question: >
+      Who are our top 10 accounts by total amount on invoices marked as paid?
+      Total each account separately (different accounts can share a name), in
+      cents, adding raw amounts regardless of currency, and show the account
+      name and that total, highest first, ties broken by account name A-Z.
+    gold_sql: |
+      SELECT a.account_name, SUM(i.amount_cents) AS total_paid_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      WHERE i.status = 'paid'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY total_paid_cents DESC, a.account_name ASC
+      LIMIT 10
+    tags: [medium, join, group_by, ranking, invoices, natural]
+
+  - id: med_tickets_by_account_having
+    question: >
+      Which accounts have opened more than 5 support tickets (open or closed)?
+      For each such account, counted separately, show the account name and its
+      ticket count, most tickets first, ties broken by account name A-Z.
+    gold_sql: |
+      SELECT a.account_name, COUNT(*) AS ticket_count
+      FROM support_tickets t
+      JOIN accounts a ON a.account_id = t.account_id
+      GROUP BY a.account_id, a.account_name
+      HAVING COUNT(*) > 5
+      ORDER BY ticket_count DESC, a.account_name ASC
+    tags: [medium, join, group_by, having, support, natural]
+
+  - id: med_avg_satisfaction_by_category
+    question: >
+      What is the average customer satisfaction score for each support ticket
+      category, counting only tickets that were rated? Show the category and its
+      average, highest first, ties broken by category A-Z.
+    gold_sql: |
+      SELECT category, AVG(satisfaction_score) AS avg_satisfaction
+      FROM support_tickets
+      WHERE satisfaction_score IS NOT NULL
+      GROUP BY category
+      ORDER BY avg_satisfaction DESC, category ASC
+    tags: [medium, group_by, null_handling, support, natural]
+
+  - id: med_usage_by_segment
+    question: >
+      What is the total product usage volume per customer segment, adding up the
+      event counts across all event types? Show the segment and the total,
+      highest first, ties broken by segment A-Z.
+    gold_sql: |
+      SELECT a.segment, SUM(e.event_count) AS total_events
+      FROM usage_events e
+      JOIN accounts a ON a.account_id = e.account_id
+      GROUP BY a.segment
+      ORDER BY total_events DESC, a.segment ASC
+    tags: [medium, join, group_by, usage, natural]
+
+  - id: med_users_per_account_top
+    question: >
+      Which 10 accounts have the most users? Count all users, active or not, for
+      each account separately, and show the account name and the user count,
+      most first, ties broken by account name A-Z.
+    gold_sql: |
+      SELECT a.account_name, COUNT(*) AS user_count
+      FROM users u
+      JOIN accounts a ON a.account_id = u.account_id
+      GROUP BY a.account_id, a.account_name
+      ORDER BY user_count DESC, a.account_name ASC
+      LIMIT 10
+    tags: [medium, join, group_by, ranking, users, natural]
+
+  - id: med_payments_by_country
+    question: >
+      How much money have we actually received from customers in each country,
+      according to the recorded payments? Show the country code and the total
+      received in cents, adding raw amounts regardless of currency, largest
+      first, ties broken by country code A-Z.
+    gold_sql: |
+      SELECT a.country, SUM(p.amount_cents) AS total_paid_cents
+      FROM payments p
+      JOIN accounts a ON a.account_id = p.account_id
+      GROUP BY a.country
+      ORDER BY total_paid_cents DESC, a.country ASC
+    tags: [medium, join, group_by, payments, natural]
+
+  - id: med_invoices_by_month
+    question: >
+      What is our total invoiced amount per month, in cents, over all invoices
+      regardless of status, adding raw amounts regardless of currency, bucketed
+      by the month the invoice was issued? Show the month as a YYYY-MM label
+      (e.g. 2024-03) and the total, in chronological order.
+    gold_sql: |
+      SELECT strftime('%Y-%m', issued_date) AS month,
+             SUM(amount_cents) AS total_amount_cents
+      FROM invoices
+      GROUP BY month
+      ORDER BY month ASC
+    tags: [medium, group_by, date_bucket, invoices, natural]
+
+  - id: med_accounts_by_industry_segment
+    question: >
+      What are the 15 largest industry-and-segment combinations by number of
+      accounts? Show the industry, the segment and the account count, biggest
+      first, ties broken by industry A-Z and then segment A-Z.
+    gold_sql: |
+      SELECT industry, segment, COUNT(*) AS account_count
+      FROM accounts
+      GROUP BY industry, segment
+      ORDER BY account_count DESC, industry ASC, segment ASC
+      LIMIT 15
+    tags: [medium, group_by, accounts, natural]
+
+  - id: med_active_subs_by_plan_having
+    question: >
+      Which plans have more than 20 active subscriptions (active status only,
+      not trialing, past due or cancelled)? Show the plan name and its number of
+      active subscriptions, most first, ties broken by plan name A-Z.
+    gold_sql: |
+      SELECT p.plan_name, COUNT(*) AS active_count
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      WHERE s.status = 'active'
+      GROUP BY p.plan_name
+      HAVING COUNT(*) > 20
+      ORDER BY active_count DESC, p.plan_name ASC
+    tags: [medium, join, group_by, having, subscriptions, natural]
+
+  - id: med_avg_invoice_by_status
+    question: >
+      What is the average invoice amount in cents for each invoice status, using
+      raw amounts regardless of currency and including zero-amount invoices?
+      Show the status and its average, highest average first, ties broken by
+      status A-Z.
+    gold_sql: |
+      SELECT status, AVG(amount_cents) AS avg_amount_cents
+      FROM invoices
+      GROUP BY status
+      ORDER BY avg_amount_cents DESC, status ASC
+    tags: [medium, group_by, invoices, natural]
+
+  - id: med_high_value_accounts_having
+    question: >
+      Which accounts have more than $5,000 of total monthly recurring revenue,
+      summed over all of their subscriptions including cancelled ones? Total
+      each account separately and show at most 20: the account name and the
+      total in cents, highest first, ties broken by account name A-Z.
+    gold_sql: |
+      SELECT a.account_name, SUM(s.mrr_cents) AS total_mrr_cents
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      GROUP BY a.account_id, a.account_name
+      HAVING SUM(s.mrr_cents) > 500000
+      ORDER BY total_mrr_cents DESC, a.account_name ASC
+      LIMIT 20
+    tags: [medium, join, group_by, having, subscriptions, natural]
+
+  - id: med_closed_tickets_by_segment
+    question: >
+      How many support tickets have been closed for accounts in each customer
+      segment? Show the segment and the number of closed tickets, most first,
+      ties broken by segment A-Z.
+    gold_sql: |
+      SELECT a.segment, COUNT(*) AS closed_ticket_count
+      FROM support_tickets t
+      JOIN accounts a ON a.account_id = t.account_id
+      WHERE t.closed_at IS NOT NULL
+      GROUP BY a.segment
+      ORDER BY closed_ticket_count DESC, a.segment ASC
+    tags: [medium, join, group_by, null_handling, support, natural]
+
+  - id: med_export_events_by_account
+    question: >
+      Which 10 accounts export the most? For each account separately, add up the
+      event counts of its export usage events, and show the account name and
+      that total, highest first, ties broken by account name A-Z.
+    gold_sql: |
+      SELECT a.account_name, SUM(e.event_count) AS export_events
+      FROM usage_events e
+      JOIN accounts a ON a.account_id = e.account_id
+      WHERE e.event_type = 'export'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY export_events DESC, a.account_name ASC
+      LIMIT 10
+    tags: [medium, join, group_by, ranking, usage, natural]
+
+  - id: med_distinct_plans_per_segment
+    question: >
+      How many different plans have accounts in each customer segment ever
+      subscribed to, counting subscriptions of any status? Show the segment and
+      the number of distinct plans, ordered by segment A-Z.
+    gold_sql: |
+      SELECT a.segment, COUNT(DISTINCT p.plan_name) AS distinct_plans
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      JOIN plans p ON p.plan_id = s.plan_id
+      GROUP BY a.segment
+      ORDER BY a.segment ASC
+    tags: [medium, join, group_by, subscriptions, natural]
+
+  - id: med_uncollectible_by_account
+    question: >
+      Which 10 accounts have the most money on invoices we marked as
+      uncollectible (not voided)? For each account separately, total those
+      invoice amounts in cents, adding raw amounts regardless of currency, and
+      show the account name and the total, highest first, ties broken by account
+      name A-Z.
+    gold_sql: |
+      SELECT a.account_name, SUM(i.amount_cents) AS uncollectible_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      WHERE i.status = 'uncollectible'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY uncollectible_cents DESC, a.account_name ASC
+      LIMIT 10
+    tags: [medium, join, group_by, ranking, invoices, natural]
+
+  - id: med_logins_by_month
+    question: >
+      How many logins happen each month? Using login usage events, add up their
+      event counts per calendar month of the event date, and show the month as a
+      YYYY-MM label (e.g. 2024-03) and the login total, in chronological order.
+    gold_sql: |
+      SELECT strftime('%Y-%m', event_date) AS month,
+             SUM(event_count) AS login_events
+      FROM usage_events
+      WHERE event_type = 'login'
+      GROUP BY month
+      ORDER BY month ASC
+    tags: [medium, group_by, date_bucket, usage, natural]
+
+  - id: med_paid_invoice_count_by_plan
+    question: >
+      How many invoices marked as paid has each plan generated, attributing each
+      invoice to the plan of the subscription it was billed under? Show the plan
+      name and the count, most first, ties broken by plan name A-Z.
+    gold_sql: |
+      SELECT p.plan_name, COUNT(*) AS paid_invoice_count
+      FROM invoices i
+      JOIN subscriptions s ON s.subscription_id = i.subscription_id
+      JOIN plans p ON p.plan_id = s.plan_id
+      WHERE i.status = 'paid'
+      GROUP BY p.plan_name
+      ORDER BY paid_invoice_count DESC, p.plan_name ASC
+    tags: [medium, join, group_by, invoices, natural]
+
+  - id: med_seats_by_plan
+    question: >
+      How many seats in total have been sold on each plan, across every
+      subscription ever (any status)? Show the plan name and the total seats,
+      most first, ties broken by plan name A-Z.
+    gold_sql: |
+      SELECT p.plan_name, SUM(s.seats) AS total_seats
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      GROUP BY p.plan_name
+      ORDER BY total_seats DESC, p.plan_name ASC
+    tags: [medium, join, group_by, subscriptions, natural]
+
+  # ---------------------------------------------------------------------------
+  # HARD — subqueries, anti/semi joins, conditional aggregation, date arithmetic, ranking
+  # ---------------------------------------------------------------------------
+  - id: hard_accounts_no_payments
+    question: >
+      Which accounts have been invoiced but have never made a single recorded
+      payment? Show the first 50 by account ID: the account ID and the account
+      name.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE account_id IN (SELECT account_id FROM invoices)
+        AND account_id NOT IN (SELECT account_id FROM payments)
+      ORDER BY account_id ASC
+      LIMIT 50
+    tags: [hard, subquery, anti_join, invoices, payments, natural]
+
+  - id: hard_above_avg_mrr
+    question: >
+      Which accounts have an above-average total monthly recurring revenue?
+      Total each account's MRR in cents across all of its subscriptions
+      (cancelled ones included), compare it with the average of those
+      per-account totals, and show the top 25 above-average accounts: account ID
+      and total MRR in cents, highest first, ties broken by account ID.
+    gold_sql: |
+      SELECT account_id, SUM(mrr_cents) AS total_mrr_cents
+      FROM subscriptions
+      GROUP BY account_id
+      HAVING SUM(mrr_cents) > (
+        SELECT AVG(per_account_total)
+        FROM (
+          SELECT SUM(mrr_cents) AS per_account_total
+          FROM subscriptions
+          GROUP BY account_id
+        )
+      )
+      ORDER BY total_mrr_cents DESC, account_id ASC
+      LIMIT 25
+    tags: [hard, subquery, group_by, having, subscriptions, natural]
+
+  - id: hard_monthly_paid_revenue
+    question: >
+      In which issue months did invoices marked as paid add up to more than
+      1,000,000 cents (raw amounts summed regardless of currency)? Show the
+      month as a YYYY-MM label (e.g. 2024-03) and that paid total in cents, in
+      chronological order.
+    gold_sql: |
+      SELECT strftime('%Y-%m', issued_date) AS month,
+             SUM(amount_cents) AS paid_cents
+      FROM invoices
+      WHERE status = 'paid'
+      GROUP BY month
+      HAVING SUM(amount_cents) > 1000000
+      ORDER BY month ASC
+    tags: [hard, group_by, having, date_bucket, invoices, natural]
+
+  - id: hard_accounts_multiple_plans
+    question: >
+      Which accounts have been on more than one distinct plan over time? Show up
+      to 25: the account ID and its number of distinct plans, most plans first,
+      ties broken by account ID.
+    gold_sql: |
+      SELECT account_id, COUNT(DISTINCT plan_id) AS plan_count
+      FROM subscriptions
+      GROUP BY account_id
+      HAVING COUNT(DISTINCT plan_id) > 1
+      ORDER BY plan_count DESC, account_id ASC
+      LIMIT 25
+    tags: [hard, group_by, having, subscriptions, natural]
+
+  - id: hard_churn_by_segment
+    question: >
+      For each customer segment, how many accounts are there in total and how
+      many of them have churned? Show the segment, the total account count and
+      the churned account count, ordered by segment A-Z.
+    gold_sql: |
+      SELECT segment,
+             COUNT(*) AS total_accounts,
+             SUM(CASE WHEN churned_date IS NOT NULL THEN 1 ELSE 0 END) AS churned_accounts
+      FROM accounts
+      GROUP BY segment
+      ORDER BY segment ASC
+    tags: [hard, conditional_aggregation, group_by, accounts, natural]
+
+  - id: hard_avg_invoices_per_account_by_segment
+    question: >
+      On average, how many invoices does an account receive, by customer
+      segment? Count each account's invoices (any status), then average those
+      counts over the accounts in each segment that have been invoiced at least
+      once. Show the segment and the average, ordered by segment A-Z.
+    gold_sql: |
+      SELECT segment, AVG(invoice_count) AS avg_invoices_per_account
+      FROM (
+        SELECT a.account_id, a.segment, COUNT(i.invoice_id) AS invoice_count
+        FROM accounts a
+        JOIN invoices i ON i.account_id = a.account_id
+        GROUP BY a.account_id, a.segment
+      )
+      GROUP BY segment
+      ORDER BY segment ASC
+    tags: [hard, subquery, group_by, invoices, natural]
+
+  - id: hard_accounts_with_urgent_tickets
+    question: >
+      Which accounts have ever raised an urgent support ticket? List each such
+      account once, first 50 by account ID: the account ID and the account name.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE account_id IN (
+        SELECT account_id FROM support_tickets WHERE priority = 'urgent'
+      )
+      ORDER BY account_id ASC
+      LIMIT 50
+    tags: [hard, subquery, semi_join, support, natural]
+
+  - id: hard_top_api_call_accounts
+    question: >
+      Who are our 5 heaviest API users? For each account separately, add up the
+      event counts of its API-call usage events, and show the account name and
+      the total API calls, highest first, ties broken by account name A-Z.
+    gold_sql: |
+      SELECT a.account_name, SUM(e.event_count) AS api_calls
+      FROM usage_events e
+      JOIN accounts a ON a.account_id = e.account_id
+      WHERE e.event_type = 'api_call'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY api_calls DESC, a.account_name ASC
+      LIMIT 5
+    tags: [hard, join, group_by, ranking, usage, natural]
+
+  - id: hard_collection_rate_by_month
+    question: >
+      For each issue month, how much did we invoice in total and how much of
+      that was on invoices marked as paid? Show the month as a YYYY-MM label
+      (e.g. 2024-03), the total invoiced in cents across all invoices, and the
+      paid total in cents, adding raw amounts regardless of currency, in
+      chronological order.
+    gold_sql: |
+      SELECT strftime('%Y-%m', issued_date) AS month,
+             SUM(amount_cents) AS invoiced_cents,
+             SUM(CASE WHEN status = 'paid' THEN amount_cents ELSE 0 END) AS paid_cents
+      FROM invoices
+      GROUP BY month
+      ORDER BY month ASC
+    tags: [hard, conditional_aggregation, date_bucket, invoices, natural]
+
+  - id: hard_accounts_no_tickets
+    question: >
+      Which active (not churned) accounts have never opened a support ticket?
+      Show the first 50 by account ID: the account ID and the account name.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE is_active = 1
+        AND account_id NOT IN (SELECT account_id FROM support_tickets)
+      ORDER BY account_id ASC
+      LIMIT 50
+    tags: [hard, subquery, anti_join, support, natural]
+
+  - id: hard_second_highest_mrr
+    question: >
+      Which account has the second-highest total monthly recurring revenue,
+      summing all of its subscriptions including cancelled ones? Rank accounts
+      by that total, highest first with ties going to the lower account ID, and
+      give just that one account's ID and its total MRR in cents.
+    gold_sql: |
+      SELECT account_id, SUM(mrr_cents) AS total_mrr_cents
+      FROM subscriptions
+      GROUP BY account_id
+      ORDER BY total_mrr_cents DESC, account_id ASC
+      LIMIT 1 OFFSET 1
+    tags: [hard, group_by, ranking, offset, subscriptions, natural]
+
+  - id: hard_paid_ratio_by_segment
+    question: >
+      For each customer segment, how many invoices are marked as paid compared
+      with how many invoices there are in total? Show the segment, the paid
+      invoice count and the total invoice count, ordered by segment A-Z.
+    gold_sql: |
+      SELECT a.segment,
+             SUM(CASE WHEN i.status = 'paid' THEN 1 ELSE 0 END) AS paid_invoices,
+             COUNT(*) AS total_invoices
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      GROUP BY a.segment
+      ORDER BY a.segment ASC
+    tags: [hard, join, conditional_aggregation, group_by, invoices, natural]
+
+  - id: hard_avg_days_to_pay
+    question: >
+      On average, how many days pass between an invoice being issued and its
+      payment being recorded? Use every recorded payment, measuring from its
+      invoice's issue date to the payment date, and give a single average (not
+      rounded).
+    gold_sql: |
+      SELECT AVG(julianday(p.paid_date) - julianday(i.issued_date)) AS avg_days_to_pay
+      FROM invoices i
+      JOIN payments p ON p.invoice_id = i.invoice_id
+    tags: [hard, join, date_arithmetic, payments, natural]
+
+  - id: hard_top_industry_by_mrr
+    question: >
+      Which 3 industries bring in the most monthly recurring revenue? Sum MRR in
+      cents over all subscriptions (cancelled ones included) of the accounts in
+      each industry, and show the industry and its total, highest first, ties
+      broken by industry A-Z.
+    gold_sql: |
+      SELECT a.industry, SUM(s.mrr_cents) AS total_mrr_cents
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      GROUP BY a.industry
+      ORDER BY total_mrr_cents DESC, a.industry ASC
+      LIMIT 3
+    tags: [hard, join, group_by, ranking, subscriptions, natural]
+
+  - id: hard_accounts_all_invoices_paid
+    question: >
+      Which accounts have paid every invoice they have ever been sent, i.e. they
+      have at least one invoice and every one of them is marked as paid? Show
+      the first 50 by account ID: the account ID and the account name.
+    gold_sql: |
+      SELECT a.account_id, a.account_name
+      FROM accounts a
+      WHERE EXISTS (SELECT 1 FROM invoices i WHERE i.account_id = a.account_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM invoices i
+          WHERE i.account_id = a.account_id AND i.status <> 'paid'
+        )
+      ORDER BY a.account_id ASC
+      LIMIT 50
+    tags: [hard, subquery, exists, invoices, natural]
+
+  - id: hard_repeat_ticket_accounts_avg_satisfaction
+    question: >
+      Among accounts that have rated at least 4 support tickets, which have the
+      lowest average satisfaction? Considering only rated tickets and each
+      account separately, show the 15 lowest: the account name and its average
+      satisfaction score, lowest first, ties broken by account name A-Z.
+    gold_sql: |
+      SELECT a.account_name, AVG(t.satisfaction_score) AS avg_satisfaction
+      FROM support_tickets t
+      JOIN accounts a ON a.account_id = t.account_id
+      WHERE t.satisfaction_score IS NOT NULL
+      GROUP BY a.account_id, a.account_name
+      HAVING COUNT(*) >= 4
+      ORDER BY avg_satisfaction ASC, a.account_name ASC
+      LIMIT 15
+    tags: [hard, join, group_by, having, null_handling, support, natural]

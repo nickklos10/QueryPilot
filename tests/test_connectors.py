@@ -50,6 +50,7 @@ def test_unknown_url_scheme_asks_for_dialect() -> None:
 
 
 def test_create_connector_picks_connector_by_backend(tmp_path: Path) -> None:
+    sqlite3.connect(tmp_path / "a.db").close()
     assert isinstance(create_connector(f"sqlite:///{tmp_path / 'a.db'}"), SQLiteConnector)
     assert isinstance(create_connector("postgresql://u:p@localhost/db"), PostgresConnector)
     assert isinstance(create_connector(f"duckdb:///{tmp_path / 'a.duckdb'}"), SQLAlchemyConnector)
@@ -382,6 +383,7 @@ class _StubConnector(BaseConnector):
 
 def _querypilot_for(dialect: str, tmp_path: Path) -> QueryPilot:
     if dialect == "sqlite":
+        sqlite3.connect(tmp_path / "blocked.db").close()
         return QueryPilot.connect(f"sqlite:///{tmp_path / 'blocked.db'}")
     if dialect == "duckdb":
         duckdb = pytest.importorskip("duckdb")

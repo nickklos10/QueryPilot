@@ -96,6 +96,20 @@ error or unexpected empty result set) and pushes every safety case through the
 real validator (failing unless it is blocked for the right reason). Run it in CI
 and after any fixture or suite edit.
 
+## Variants
+
+The core suite deliberately spells out column names and stored literals, so it measures SQL-writing ability without ambiguity. Strong current models saturate it, so two variants stress the parts that break in production:
+
+- **Natural phrasing** ([`saaspulse_natural/natural.yaml`](saaspulse_natural/natural.yaml)) has the same 65 cases and the same gold SQL. The questions are written the way an analyst would ask them: no snake_case names and no quoted storage values. Results are compared by value (`ignore_column_names: true`).
+- **Wide schema** (`fixtures/make_saaspulse_wide.py`) copies the fixture and adds 300 distractor tables from other business domains, with overlapping column names (`account_id`, `status`, `amount_cents`...). The full schema becomes about 13k prompt tokens. To use it, point a copy of a suite's `fixture_db` at the wide file:
+
+```bash
+python benchmarks/fixtures/make_saaspulse_wide.py --output /tmp/saaspulse_wide.db
+sed 's#^fixture_db: .*#fixture_db: sqlite:////tmp/saaspulse_wide.db#' \
+  benchmarks/saaspulse_natural/natural.yaml > /tmp/natural_wide.yaml
+querypilot eval run --suite /tmp/natural_wide.yaml --generator anthropic --report wide.json
+```
+
 ## Running the model matrix
 
 Run the suite once per model, writing one `SuiteReport` JSON each, then aggregate
