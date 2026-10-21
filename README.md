@@ -135,6 +135,18 @@ Every statement then gets the following:
 
 Driver handshakes, `SET`/`SHOW` of formatting settings, and catalog queries for `psql \d` and ORM reflection pass through an allowlist. Catalog queries that could read data, such as `pg_stats` or `query_to_xml(...)`, are rejected. The policy file is a normal `querypilot.yaml`, and its `database_url` is used when you omit `--upstream`. Off loopback, set `QUERYPILOT_PROXY_PASSWORD`. Protocol coverage, known gaps (no TLS termination yet, no server-side cursors), and the reasons it fails closed are in [docs/proxy.md](docs/proxy.md).
 
+## Watch the SQL your agent already runs: `querypilot trace` and `hooks`
+
+Some query tools can't sit behind QueryPilot, for example Palantir Foundry's MCP SQL tool. For those, QueryPilot reads what the agent did instead. `trace import` pairs every query tool call in Claude Code transcripts with its result. `hooks install` logs new calls live. `trace doctor` reports the failure rate by class, retry chains, latency and stalls, and says for each problem whether it is best fixed in the tool, the prompt, or the data:
+
+```bash
+querypilot trace doctor                        # reads ~/.claude/projects
+querypilot trace doctor --output report.md     # redacted, shareable
+querypilot hooks install --guard --max-rows 200
+```
+
+With `--guard`, a PreToolUse hook validates each query against schemas cached from the agent's own schema calls. It denies unknown columns with a "did you mean" reply before the query reaches the warehouse, blocks date arithmetic on DATE columns stored as epoch milliseconds, and enforces a row cap. Foundry's tool is mapped by default; map any other with `--tool NAME=SQL_FIELD[:DIALECT]`. Recovered retry chains export to `eval replay` as a regression suite. See [docs/trace.md](docs/trace.md) and the [first Foundry report](docs/trace-doctor-foundry-2026-10-21.md).
+
 ## Better SQL from the model
 
 When QueryPilot writes the SQL itself (`ask`, `ask_database`, evals), it uses the techniques with the largest measured gains in the text-to-SQL literature. The sources and numbers are in [docs/research/developer-needs.md](docs/research/developer-needs.md).

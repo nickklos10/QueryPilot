@@ -33,6 +33,11 @@ class QueryAuditRecord(BaseModel):
     session_id: str | None = None
     app_name: str | None = None
     trace_id: str | None = None
+    # Set for agent tool calls captured by `querypilot trace` and the Claude Code hooks.
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    # Tool-call context: sequence, failure class, result size, guard decision.
+    details: dict = Field(default_factory=dict)
 
     @classmethod
     def create(
