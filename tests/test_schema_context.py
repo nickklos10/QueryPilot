@@ -103,8 +103,8 @@ def test_sampling_fills_safe_text_columns_only(shop_db_url: str) -> None:
     samples = {column.name: column.sample_values for column in customers.columns}
 
     assert samples["segment"] == ["SMB", "Enterprise"]  # most frequent first
-    assert samples["customer_name"] == ["Acme Corp", "Globex", "Initech"]
-    assert samples["notes"] == ["call back"]
+    assert samples["customer_name"] == []  # names are personal data or free text
+    assert samples["notes"] == []  # free text
     assert samples["tier"] == []  # masked
     assert samples["email"] == []  # sensitive name
     assert samples["external_id"] == []  # ID-like
@@ -178,12 +178,12 @@ def test_sampling_can_be_disabled(shop_db_url: str) -> None:
 def test_long_values_are_truncated(tmp_path: Path) -> None:
     db = tmp_path / "long.db"
     sqlite3.connect(db).executescript(
-        "CREATE TABLE docs (id INTEGER PRIMARY KEY, body TEXT);"
-        f"INSERT INTO docs VALUES (1, '{'x' * 200}');"
+        "CREATE TABLE docs (id INTEGER PRIMARY KEY, category TEXT);"
+        f"INSERT INTO docs VALUES (1, '{'x' * 200}'), (2, '{'x' * 200}');"
     )
     qp = QueryPilot.connect(f"sqlite:///{db}")
 
-    value = qp.table_details(["docs"])[0].get_column("body").sample_values[0]
+    value = qp.table_details(["docs"])[0].get_column("category").sample_values[0]
 
     assert len(value) <= 40 and value.endswith("...")
 
@@ -223,6 +223,53 @@ def test_column_sampling_rules() -> None:
     assert not ok("code", pk=True)
     assert not ok("userId") and not ok("account_uuid") and not ok("owner")
     assert not ok("password_hash") and not ok("api_key") and not ok("phone_number")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "name", "customer_name", "companyName", "company", "title", "notes", "comment",
+        "description", "billing_address", "ip", "ip_address", "website_url", "ssn",
+        "dob", "birth_date", "salary", "user_agent", "message_body",
+    ],
+)
+def test_personal_and_free_text_columns_are_not_sampled(name: str) -> None:
+    table = TableSchema(name="t", columns=[])
+
+    assert not column_can_be_sampled(table, ColumnSchema(name=name, type="TEXT"), QueryPilotConfig())
+
+
+@pytest.mark.parametrize(
+    "name", ["status", "segment", "plan", "type", "event_type", "currency", "country", "category", "priority"]
+)
+def test_category_like_columns_are_sampled(name: str) -> None:
+    table = TableSchema(name="t", columns=[])
+
+    assert column_can_be_sampled(table, ColumnSchema(name=name, type="TEXT"), QueryPilotConfig())
+
+
+def test_only_low_cardinality_columns_keep_samples(tmp_path: Path) -> None:
+    db = tmp_path / "cardinality.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE events (id INTEGER PRIMARY KEY, kind TEXT, code TEXT, label TEXT)")
+    conn.executemany(
+        "INSERT INTO events (kind, code, label) VALUES (?, ?, ?)",
+        # kind: 3 repeating values; code: 60 distinct values; label: unique per row.
+        [(f"k{i % 3}", f"c{i % 60}", f"row {i}") for i in range(120)],
+    )
+    conn.execute("CREATE TABLE tiny (id INTEGER PRIMARY KEY, label TEXT)")
+    conn.executemany("INSERT INTO tiny (label) VALUES (?)", [("a",), ("b",), ("c",)])
+    conn.commit()
+    conn.close()
+    qp = QueryPilot.connect(f"sqlite:///{db}")
+
+    events = qp.table_details(["events"])[0]
+    tiny = qp.table_details(["tiny"])[0]
+
+    assert events.get_column("kind").sample_values == ["k0", "k1", "k2"]
+    assert events.get_column("code").sample_values == []  # more than 50 distinct values
+    assert events.get_column("label").sample_values == []  # every value is unique
+    assert tiny.get_column("label").sample_values == []
 
 
 # --------------------------------------------------------------------------- pruning

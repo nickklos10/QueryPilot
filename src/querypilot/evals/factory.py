@@ -71,7 +71,7 @@ def build_qp_factory(
     generator: SQLGenerator,
     max_rows: int = 100,
     timeout_seconds: int = 10,
-    max_generation_attempts: int = 2,
+    max_generation_attempts: int = 3,
 ) -> QueryPilotFactory:
     def _make(case: BenchmarkCase) -> QueryPilot:
         url = case.fixture_db or database_url

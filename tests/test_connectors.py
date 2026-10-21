@@ -5,7 +5,8 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.pool import StaticPool
 
 from querypilot import QueryPilot
 from querypilot.connectors.base import BaseConnector
@@ -281,6 +282,71 @@ def test_session_guards_run_before_query_and_always_roll_back(
     _recording_connector(backend, executed).execute_readonly("SELECT 1")
 
     assert executed == [*expected, "SELECT 1", "ROLLBACK"]
+
+
+def test_mariadb_behind_a_mysql_url_gets_its_own_timeout_statement() -> None:
+    executed: list[str] = []
+    connector = _recording_connector("mysql", executed)
+
+    class MariaDBConnection(_RecordingConnection):
+        dialect = type("Dialect", (), {"is_mariadb": True})()
+
+    connector.engine = type("Engine", (), {"connect": lambda _self: MariaDBConnection(executed)})()
+    connector.execute_readonly("SELECT 1")
+
+    assert executed == [
+        "SET SESSION max_statement_time = 5",
+        "START TRANSACTION READ ONLY",
+        "SELECT 1",
+        "ROLLBACK",
+    ]
+
+
+def test_sqlite_query_only_is_restored_even_when_rollback_fails() -> None:
+    executed: list[str] = []
+    connector = _recording_connector("sqlite", executed)
+
+    class FailingRollback(_RecordingConnection):
+        def begin(self):
+            def rollback(_self):
+                raise RuntimeError("rollback failed")
+
+            return type("Txn", (), {"rollback": rollback})()
+
+        def execute(self, statement):
+            self.executed.append(str(statement))
+            return type("Result", (), {"fetchall": lambda _self: [], "scalar": lambda _self: 0})()
+
+    connector.engine = type("Engine", (), {"connect": lambda _self: FailingRollback(executed)})()
+
+    with pytest.raises(RuntimeError, match="rollback failed"):
+        connector.execute_readonly("SELECT 1")
+    assert executed[-2:] == ["PRAGMA query_only = 0", "ROLLBACK"]
+
+
+def test_sqlite_engine_restores_previous_query_only_value(sqlite_keys_url: str) -> None:
+    engine = create_engine(sqlite_keys_url, poolclass=StaticPool)
+    event.listen(engine, "connect", lambda dbapi, _record: dbapi.execute("PRAGMA query_only = ON"))
+    connector = create_connector(engine)
+
+    assert connector.execute_readonly("SELECT count(*) AS n FROM customers") == ([{"n": 1}], 1)
+    with engine.connect() as conn:
+        assert conn.execute(text("PRAGMA query_only")).scalar() == 1
+
+
+def test_sqlite_engine_query_is_stopped_at_the_timeout(sqlite_keys_url: str) -> None:
+    engine = create_engine(sqlite_keys_url, poolclass=StaticPool)
+    connector = create_connector(engine, timeout_seconds=0)
+    slow = (
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000000) "
+        "SELECT count(*) AS c FROM n"
+    )
+
+    with pytest.raises(Exception, match="interrupted"):
+        connector.execute_readonly(slow)
+    # The progress handler is removed afterwards, so the connection is usable again.
+    with engine.connect() as conn:
+        assert conn.execute(text(slow)).scalar() == 5000000
 
 
 # --- Rendering and dangerous functions -----------------------------------------

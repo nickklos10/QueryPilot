@@ -93,11 +93,14 @@ def test_describe_table_hides_policy_columns_and_masked_samples(demo_db_url: str
 def test_describe_table_shows_sample_values(demo_db_url: str) -> None:
     qp = QueryPilot.connect(demo_db_url)
 
-    result = qp.handle_tool_call("describe_table", {"table_names": "customers"})
+    result = qp.handle_tool_call("describe_table", {"table_names": "customers,invoices"})
 
-    columns = {column["name"]: column for column in result["tables"][0]["columns"]}
-    assert "Acme Corp" in columns["customer_name"]["sample_values"]
-    assert columns["customer_name"]["nullable"] is False
+    tables = {table["name"]: table for table in result["tables"]}
+    customers = {column["name"]: column for column in tables["customers"]["columns"]}
+    invoices = {column["name"]: column for column in tables["invoices"]["columns"]}
+    assert invoices["month"]["sample_values"] == ["2026-04", "2026-03"]
+    assert "sample_values" not in customers["customer_name"]  # names are never sampled
+    assert customers["customer_name"]["nullable"] is False
 
 
 def test_describe_table_allowed_columns_and_foreign_keys(tmp_path: Path) -> None:
@@ -205,7 +208,8 @@ def test_failures_are_payloads_not_exceptions(demo_db_url: str) -> None:
         assert isinstance(result["error"], str) and result["error"]
         assert isinstance(result["hints"], list)
     assert dropped["error"].startswith("SQL validation failed")
-    assert "customers.revenue" in blocked["error"]
+    assert "customers.revenue" not in blocked["error"]
+    assert "restricted by the access policy" in blocked["error"]
     assert "Unknown tool" in unknown_tool["error"]
     assert "run_sql" in unknown_tool["hints"][0]
     assert "sql" in missing_argument["error"]
@@ -298,3 +302,130 @@ def test_list_tables_accepts_empty_arguments(demo_db_url: str, arguments) -> Non
     qp = QueryPilot.connect(demo_db_url)
 
     assert qp.handle_tool_call("list_tables", arguments)["count"] == 2
+
+
+# --------------------------------------------------------------------------- leaks
+
+
+@pytest.fixture()
+def masked_duckdb_url(tmp_path: Path) -> str:
+    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb_engine")
+    path = tmp_path / "users.duckdb"
+    conn = duckdb.connect(str(path))
+    conn.execute(
+        "CREATE TABLE users (id INTEGER, email VARCHAR, plan VARCHAR, tenant_id INTEGER);"
+        "INSERT INTO users VALUES (1, 'alice@x.com', 'pro', 42), (2, 'bob@y.com', 'free', 7);"
+    )
+    conn.close()
+    return f"duckdb:///{path}"
+
+
+def test_run_sql_database_errors_do_not_echo_masked_values(masked_duckdb_url: str) -> None:
+    qp = QueryPilot.connect(
+        masked_duckdb_url,
+        access_policy=AccessPolicy(
+            masking_rules={"users": {"email": MaskingRule(mode="redact")}},
+            row_filters={"users": "tenant_id = 42"},
+        ),
+    )
+
+    result = qp.handle_tool_call("run_sql", {"sql": "SELECT CAST(email AS INTEGER) FROM users"})
+
+    assert result["ok"] is False
+    assert result["error"].startswith("Database error: ")
+    assert "<redacted>" in result["error"]
+    assert "alice" not in json.dumps(result)
+    # DuckDB's "LINE 1: <rewritten SQL>" echo (with the row filter) is dropped too.
+    assert "tenant_id" not in json.dumps(result)
+
+
+def test_run_sql_database_errors_are_cleaned_and_get_hints(demo_db_url: str) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    qp = QueryPilot.connect(demo_db_url)
+
+    class Failing:
+        def get_schema(self):
+            raise AssertionError("schema is cached")
+
+        def execute_readonly(self, sql: str):
+            raise OperationalError(sql, {}, sqlite3.OperationalError("no such column: custmer_name"))
+
+    qp.get_schema()
+    qp.connector = Failing()
+
+    result = qp.handle_tool_call("run_sql", {"sql": "SELECT customer_name FROM customers"})
+
+    assert result["error"] == "Database error: no such column: custmer_name"
+    assert any("did you mean customers.customer_name" in hint for hint in result["hints"])
+
+
+def test_policy_errors_do_not_name_hidden_columns(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, access_policy=AccessPolicy(blocked_columns={"customers": ["revenue"]}))
+
+    run = qp.handle_tool_call("run_sql", {"sql": "SELECT * FROM customers"})
+    validate = qp.handle_tool_call("validate_sql", {"sql": "SELECT * FROM customers"})
+    with pytest.raises(ValueError) as raised:
+        qp.execute_sql("SELECT * FROM customers")
+
+    for payload in (run, validate):
+        assert payload["ok"] is False
+        assert "revenue" not in json.dumps(payload)
+        assert "restricted by the access policy" in json.dumps(payload)
+    assert "revenue" not in str(raised.value)
+    # Operators still see the original error.
+    assert qp.get_audit_records(1)[0].error == "Column is blocked by access policy: customers.revenue"
+    assert qp.validate_sql("SELECT * FROM customers").errors == [
+        "Column is blocked by access policy: customers.revenue"
+    ]
+
+
+def test_row_filter_predicates_are_not_echoed(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(
+        demo_db_url,
+        generator=FixedGenerator(),
+        access_policy=AccessPolicy(row_filters={"customers": "arr > 50000"}),
+    )
+    sql = "SELECT customer_name FROM customers"
+
+    run = qp.handle_tool_call("run_sql", {"sql": sql})
+    validate = qp.handle_tool_call("validate_sql", {"sql": sql})
+    ask = qp.handle_tool_call("ask_database", {"question": "List customers"})
+
+    for payload in (run, validate, ask):
+        assert payload["ok"] is True
+        assert payload["sql"] == sql
+        assert "50000" not in json.dumps(payload)
+        assert "Row-level filters" in payload["note"]
+    assert run["rows"] == [["Acme Corp"], ["Globex"]]
+    # The audit record keeps the SQL that actually ran.
+    assert "arr > 50000" in qp.get_audit_records(1)[0].rewritten_sql
+
+
+def test_without_row_filters_the_rewritten_sql_is_shown(demo_db_url: str) -> None:
+    qp = QueryPilot.connect(demo_db_url, max_rows=5)
+
+    run = qp.handle_tool_call("run_sql", {"sql": "SELECT customer_name FROM customers"})
+
+    assert run["sql"] == "SELECT customer_name FROM customers LIMIT 5"
+    assert "note" not in run
+
+
+def test_search_schema_keeps_multi_column_matches() -> None:
+    fixture = Path(__file__).parent / "fixtures" / "demo.db"
+    open_qp = QueryPilot.connect(f"sqlite:///{fixture}")
+    blocked_qp = QueryPilot.connect(
+        f"sqlite:///{fixture}", access_policy=AccessPolicy(blocked_columns={"customers": ["revenue"]})
+    )
+
+    open_matches = open_qp.handle_tool_call("search_schema", {"query": "customer revenue"})["matches"]
+    blocked_matches = blocked_qp.handle_tool_call("search_schema", {"query": "customer revenue"})["matches"]
+
+    customers = next(match for match in open_matches if match["table"] == "customers")
+    assert customers["columns"] == ["customer_name", "revenue"]
+    blocked_customers = next(match for match in blocked_matches if match["table"] == "customers")
+    assert blocked_customers["columns"] == ["customer_name"]
+    assert "revenue" not in json.dumps(
+        [match for match in blocked_matches if match["table"] == "customers"]
+    )

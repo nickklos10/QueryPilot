@@ -73,7 +73,8 @@ def create_app(
 
     @app.get("/schema")
     def get_schema() -> dict[str, Any]:
-        return qp.get_schema().model_dump()
+        # The policy-visible schema: blocked tables and hidden columns are left out.
+        return qp.visible_schema().model_dump()
 
     @app.post("/search-schema")
     def search_schema(request: SchemaSearchRequest) -> list[dict[str, Any]]:

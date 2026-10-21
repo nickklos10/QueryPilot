@@ -110,19 +110,19 @@ def test_llm_repair_prompt_contains_execution_feedback(demo_db_url: str) -> None
 
 def test_empty_result_gets_one_review_with_samples_in_context(demo_db_url: str) -> None:
     generator = ScriptedGenerator(
-        "SELECT revenue FROM customers WHERE customer_name = 'acme corp'",
-        "SELECT revenue FROM customers WHERE customer_name = 'Acme Corp'",
+        "SELECT revenue FROM invoices WHERE month = '2026-4'",
+        "SELECT revenue FROM invoices WHERE month = '2026-04'",
     )
     qp = QueryPilot.connect(demo_db_url, generator=generator)
 
-    answer = qp.ask("Revenue of acme corp")
+    answer = qp.ask("Invoice revenue in April 2026")
 
-    assert answer.rows == [{"revenue": 120000}]
+    assert answer.rows == [{"revenue": 9000}, {"revenue": 8000}]
     assert len(generator.repairs) == 1
     assert generator.repairs[0][1].errors == [EMPTY_RESULT_FEEDBACK]
-    customers = generator.schemas[1].get_table("customers")
-    assert customers is not None
-    assert "Acme Corp" in customers.get_column("customer_name").sample_values
+    invoices = generator.schemas[1].get_table("invoices")
+    assert invoices is not None
+    assert "2026-04" in invoices.get_column("month").sample_values
 
 
 def test_same_sql_after_empty_review_accepts_empty_result(demo_db_url: str) -> None:
@@ -190,7 +190,9 @@ def test_restricted_column_hint_and_no_suggestion_of_hidden_columns(demo_db_url:
     assert answer.rows
     first, second = (feedback.errors for _, feedback in generator.repairs)
     assert not any("customers.revenue" in line for line in first)
-    assert any("restricted" in line and "answer without it" in line for line in second)
+    # The blocked column is not named, but the model is told to leave it out.
+    assert not any("revenue" in line for line in second)
+    assert any("restricted by the access policy" in line for line in second)
     # The blocked column never reaches the model's schema.
     assert all(
         schema.get_table("customers").get_column("revenue") is None
@@ -228,3 +230,43 @@ def test_repair_returning_no_sql_reports_previous_error(demo_db_url: str) -> Non
 
     with pytest.raises(ValueError, match="Unknown column: nope"):
         qp.ask("anything")
+
+
+def test_repair_feedback_and_errors_redact_stored_values(tmp_path) -> None:
+    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb_engine")
+    path = tmp_path / "users.duckdb"
+    conn = duckdb.connect(str(path))
+    conn.execute("CREATE TABLE users (id INTEGER, email VARCHAR); INSERT INTO users VALUES (1, 'alice@x.com');")
+    conn.close()
+    policy = AccessPolicy(masking_rules={"users": {"email": {"mode": "redact"}}})
+    generator = ScriptedGenerator("SELECT CAST(email AS INTEGER) AS n FROM users")
+    qp = QueryPilot.connect(f"duckdb:///{path}", generator=generator, access_policy=policy)
+
+    with pytest.raises(ValueError) as raised:
+        qp.ask("email as a number")
+
+    feedback = [line for _, validation in generator.repairs for line in validation.errors]
+    assert feedback and all("alice" not in line for line in feedback)
+    assert any("<redacted>" in line for line in feedback)
+    assert "alice" not in str(raised.value)
+    # The repair request carries no rewritten SQL or policy details.
+    assert all(validation.rewritten_sql is None for _, validation in generator.repairs)
+    # Operators still get the full database error.
+    assert "alice@x.com" in (qp.get_audit_records(1)[0].error or "")
+
+
+def test_ask_errors_do_not_name_hidden_columns(demo_db_url: str) -> None:
+    policy = AccessPolicy(blocked_columns={"customers": ["revenue"]})
+    generator = ScriptedGenerator("SELECT * FROM customers")
+    qp = QueryPilot.connect(demo_db_url, generator=generator, access_policy=policy)
+
+    with pytest.raises(ValueError) as raised:
+        qp.ask("everything about customers")
+
+    assert "revenue" not in str(raised.value)
+    assert "restricted by the access policy" in str(raised.value)
+    assert all(
+        "revenue" not in line for _, validation in generator.repairs for line in validation.errors
+    )
+    assert "customers.revenue" in (qp.get_audit_records(1)[0].error or "")

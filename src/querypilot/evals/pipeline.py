@@ -251,7 +251,7 @@ def _run_question_case(
             token_usage=cost_tracker.last_usage(),
             estimated_cost_usd=_estimated_cost(cost_tracker.last_usage()),
             tags=list(case.tags),
-            error=run.error,
+            error=run.audit_error or run.error,
         )
     candidate_rows = run.result.rows
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -37,9 +38,15 @@ from querypilot.execution.runner import execute
 from querypilot.generation.sql_generator import DemoSQLGenerator, SQLGenerator
 from querypilot.schema.enrich import enrich_schema
 from querypilot.schema.pruning import prune_schema, visible_schema
-from querypilot.schema.sampling import apply_samples, cached_samples
+from querypilot.schema.sampling import apply_samples, cached_samples, clear_sample_cache
 from querypilot.schema.search import search_schema as search_schema_impl
-from querypilot.validation.feedback import clean_error, describe_db_error, repair_hints
+from querypilot.validation.feedback import (
+    clean_db_message,
+    clean_error,
+    describe_db_error,
+    public_errors,
+    repair_hints,
+)
 from querypilot.validation.validator import SQLValidator
 
 
@@ -58,7 +65,8 @@ class QueryPilot:
         self.validator = SQLValidator(config)
         self.audit_sink = audit_sink or InMemoryAuditSink()
         self.audit_metadata = audit_metadata or AuditMetadata()
-        self._schema: DatabaseSchema | None = None
+        # Shared with with_audit_metadata() copies (sample values are cached per connector).
+        self._schema_cache = _SchemaCache()
 
     @classmethod
     def connect(
@@ -135,15 +143,36 @@ class QueryPilot:
         return connect_project(load_project_config(config_path), **overrides)
 
     def get_schema(self) -> DatabaseSchema:
-        """Return the introspected schema, cached after the first call."""
-        if self._schema is None:
-            self._schema = enrich_schema(self.connector.get_schema(), self.connector, self.config)
-        return self._schema
+        """Return the introspected schema, cached after the first call.
+
+        The cache is shared with every ``with_audit_metadata`` copy of this
+        client, and concurrent first calls introspect only once.
+        """
+        cache = self._schema_cache
+        schema = cache.schema
+        if schema is None:
+            with cache.lock:
+                if cache.schema is None:
+                    cache.schema = enrich_schema(
+                        self.connector.get_schema(), self.connector, self.config
+                    )
+                schema = cache.schema
+        return schema
 
     def refresh_schema(self) -> DatabaseSchema:
-        """Drop the cached schema and introspect the database again."""
-        self._schema = None
+        """Drop the cached schema and sample values (for this client and its copies) and
+        introspect the database again."""
+        with self._schema_cache.lock:
+            self._schema_cache.schema = None
+        clear_sample_cache(self.connector)
         return self.get_schema()
+
+    def visible_schema(self) -> DatabaseSchema:
+        """The schema without the tables, columns and foreign keys the access policy hides.
+
+        This is what agents may see; ``get_schema`` is the full, unfiltered schema.
+        """
+        return visible_schema(self.get_schema(), self.config)
 
     def table_details(self, table_names: list[str]) -> list[TableSchema]:
         """Return full table definitions (keys, comments, sample values) for the named tables.
@@ -152,7 +181,7 @@ class QueryPilot:
         values are only fetched for columns the policy lets the caller read
         unmasked and unfiltered. The results are copies.
         """
-        schema = self._visible_schema()
+        schema = self.visible_schema()
         tables = [schema.get_table(name) for name in table_names]
         return [self._with_samples(table) for table in tables if table is not None]
 
@@ -164,7 +193,7 @@ class QueryPilot:
         foreign-key bridge tables), with sample values and ``config.hints``.
         """
         pruned = prune_schema(
-            self._visible_schema(),
+            self.visible_schema(),
             question,
             self.config.schema_token_budget,
             sample_values=self.config.sample_values,
@@ -176,9 +205,6 @@ class QueryPilot:
             }
         )
 
-    def _visible_schema(self) -> DatabaseSchema:
-        return visible_schema(self.get_schema(), self.config)
-
     def _with_samples(self, table: TableSchema) -> TableSchema:
         if self.config.sample_values <= 0:
             return table.model_copy(deep=True)
@@ -186,7 +212,8 @@ class QueryPilot:
         return apply_samples(table, samples)
 
     def search_schema(self, query: str) -> list[SchemaMatch]:
-        matches = search_schema_impl(self.get_schema(), query)
+        """Tables (and their matching columns) relevant to ``query``, within the visible schema."""
+        matches = search_schema_impl(self.visible_schema(), query)
         self._write_audit_record(
             operation="schema_search",
             question=query,
@@ -236,7 +263,9 @@ class QueryPilot:
                 access_policy=validation.access_policy,
                 error=details,
             )
-            raise ValueError(f"SQL validation failed: {details}")
+            # The audit record keeps the full errors; the message leaves out hidden names.
+            public = "; ".join(public_errors(validation.errors)) or details
+            raise ValueError(f"SQL validation failed: {public}")
         result = execute(self.connector, validation.rewritten_sql)
         result.rows = self._apply_masking(result.rows, validation)
         result.access_policy = validation.access_policy
@@ -277,7 +306,7 @@ class QueryPilot:
                 valid=bool(run.validation and run.validation.valid),
                 executed=False,
                 access_policy=run.validation.access_policy if run.validation else {},
-                error=run.error,
+                error=run.audit_error or run.error,
             )
             raise ValueError(run.error or "SQL validation failed: unknown validation error")
 
@@ -301,6 +330,7 @@ class QueryPilot:
             audit_id=record.audit_id,
             question=question,
             sql=result.sql,
+            generated_sql=generated.sql,
             rows=result.rows,
             explanation=explanation,
             validation=validation,
@@ -318,7 +348,7 @@ class QueryPilot:
         max_attempts = self.config.max_generation_attempts
         can_repair = callable(getattr(self.generator, "repair", None))
         context = self.schema_for_prompt(question)
-        hint_schema = self._visible_schema()
+        hint_schema = self.visible_schema()
 
         started = time.perf_counter()
         generated = self.generate_sql(question, schema=context)
@@ -346,10 +376,14 @@ class QueryPilot:
 
             outcome: str
             if not validation.valid or validation.rewritten_sql is None:
-                errors = [clean_error(error) for error in validation.errors]
+                # The model sees errors without the names of hidden tables and columns;
+                # the audit record (audit_error) keeps the originals.
+                errors = public_errors(validation.errors)
                 details = "; ".join(errors) or "unknown validation error"
                 run.failure, run.error = "validation", f"SQL validation failed: {details}"
-                hints = repair_hints(validation.errors, hint_schema, sql)
+                full = "; ".join(clean_error(error) for error in validation.errors)
+                run.audit_error = f"SQL validation failed: {full or details}"
+                hints = repair_hints(errors, hint_schema, sql)
                 feedback = errors + [f"Hint: {hint}" for hint in hints]
                 outcome = "validation"
             else:
@@ -358,9 +392,12 @@ class QueryPilot:
                     result = self._execute_validated(validation)
                 except Exception as exc:  # noqa: BLE001 - database errors become feedback
                     run.execute_ms += _elapsed_ms(started)
-                    lines = describe_db_error(exc, hint_schema, validation.rewritten_sql)
+                    # The model's own SQL, not the rewritten one: redaction keeps its
+                    # names and literals but not row-filter values.
+                    lines = describe_db_error(exc, hint_schema, sql)
                     run.failure = "execution"
                     run.error = f"SQL execution failed: {lines[0].removeprefix('Database error: ')}"
+                    run.audit_error = f"SQL execution failed: {clean_db_message(exc)}"
                     feedback = [lines[0], *(f"Hint: {hint}" for hint in lines[1:])]
                     outcome = "execution"
                 else:
@@ -369,7 +406,7 @@ class QueryPilot:
                         run.succeed(generated, validation, result)
                         return run
                     empty_fallback = (generated, validation, result)
-                    run.failure, run.error = None, None
+                    run.failure, run.error, run.audit_error = None, None, None
                     reviewed_empty = True
                     feedback = [EMPTY_RESULT_FEEDBACK]
                     outcome = "empty"
@@ -384,7 +421,7 @@ class QueryPilot:
                 context,
                 self.config.max_rows,
                 sql,
-                validation.model_copy(update={"valid": False, "errors": feedback}),
+                _repair_validation(validation, feedback),
             )
             run.repair_ms += _elapsed_ms(started)
             run.repair_attempts += 1
@@ -439,7 +476,7 @@ class QueryPilot:
             audit_sink=self.audit_sink,
             audit_metadata=metadata or AuditMetadata(),
         )
-        scoped._schema = self._schema
+        scoped._schema_cache = self._schema_cache
         return scoped
 
     def _write_audit_record(self, operation: str, **kwargs) -> QueryAuditRecord:
@@ -490,6 +527,14 @@ EMPTY_RESULT_FEEDBACK = (
 )
 
 
+class _SchemaCache:
+    """The introspected schema, shared by a client and its ``with_audit_metadata`` copies."""
+
+    def __init__(self) -> None:
+        self.schema: DatabaseSchema | None = None
+        self.lock = threading.Lock()
+
+
 @dataclass
 class _GenerationRun:
     """Outcome of ``QueryPilot._generate_and_run``."""
@@ -500,7 +545,10 @@ class _GenerationRun:
     result: QueryResult | None = None
     # "generation", "validation" or "execution" when the run failed.
     failure: str | None = None
+    # ``error`` is safe to show the caller (no hidden names, no stored values);
+    # ``audit_error`` is the unredacted version for audit records and evals.
     error: str | None = None
+    audit_error: str | None = None
     repair_attempts: int = 0
     # Feedback sent with each repair request, in order.
     feedback: list[list[str]] = field(default_factory=list)
@@ -518,6 +566,22 @@ class _GenerationRun:
         self.result = result
         self.failure = None
         self.error = None
+        self.audit_error = None
+
+
+def _repair_validation(validation: ValidationResult, feedback: list[str]) -> ValidationResult:
+    """The validation handed to ``repair``: the feedback as errors, without the fields
+    that can name hidden objects or show row-filter predicates."""
+    return validation.model_copy(
+        update={
+            "valid": False,
+            "errors": feedback,
+            "rewritten_sql": None,
+            "blocked_reason": None,
+            "policy_checks": [],
+            "access_policy": {},
+        }
+    )
 
 
 def _elapsed_ms(started: float) -> int:

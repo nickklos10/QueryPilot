@@ -17,7 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from querypilot.adapters.anthropic import anthropic_tool
 from querypilot.adapters.openai import openai_responses_tool, openai_tool
 from querypilot.core.types import ColumnSchema, DatabaseSchema, TableSchema
-from querypilot.validation.feedback import clean_error, repair_hints
+from querypilot.validation.feedback import (
+    clean_error,
+    describe_db_error,
+    public_errors,
+    redact_values,
+    repair_hints,
+)
 
 if TYPE_CHECKING:
     from querypilot.core.client import QueryPilot
@@ -31,6 +37,10 @@ TOOL_KEYS = (
     "validate_sql",
     "run_sql",
     "ask_database",
+)
+ROW_FILTER_NOTE = (
+    "Row-level filters from the access policy were applied, so the results only "
+    "include rows you are allowed to see."
 )
 # Older names that still dispatch, but are not advertised to the model.
 TOOL_ALIASES = {"execute_sql": "run_sql"}
@@ -185,7 +195,7 @@ class QueryPilotToolkit:
         except _ArgumentError as exc:
             return _error(str(exc), [f"{tool.name} expects: {_describe_params(tool.parameters)}"])
         except Exception as exc:  # noqa: BLE001 - every failure becomes a payload
-            return _error(clean_error(f"{type(exc).__name__}: {exc}"))
+            return _error(self._redact(clean_error(f"{type(exc).__name__}: {exc}")))
 
     def dispatch_json(self, name: str, arguments: Mapping[str, Any] | str | None = None) -> str:
         """``dispatch`` serialised to a JSON string, for frameworks that expect text."""
@@ -214,7 +224,7 @@ class QueryPilotToolkit:
         )
 
     def _list_tables(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        tables = self._visible_schema().tables
+        tables = self.visible_schema().tables
         entries = []
         for table in tables:
             entry: dict[str, Any] = {"name": table.name}
@@ -238,7 +248,7 @@ class QueryPilotToolkit:
 
     def _describe_table(self, arguments: dict[str, Any]) -> dict[str, Any]:
         requested = _table_names_argument(arguments)
-        visible = self._visible_schema()
+        visible = self.visible_schema()
         found_names: list[str] = []
         unknown: list[str] = []
         for name in requested:
@@ -265,17 +275,20 @@ class QueryPilotToolkit:
 
     def _search_schema(self, arguments: dict[str, Any]) -> dict[str, Any]:
         query = _string_argument(arguments, "query")
-        visible = self._visible_schema()
+        visible = self.visible_schema()
         matches = []
         for match in self.querypilot.search_schema(query):
             table = visible.get_table(match.table)
             if table is None:
                 continue
-            if match.column is not None and table.get_column(match.column) is None:
+            # A match lists every column that matched, comma-separated.
+            named = [name.strip() for name in (match.column or "").split(",") if name.strip()]
+            columns = [name for name in named if table.get_column(name) is not None]
+            if named and not columns:
                 continue
             entry: dict[str, Any] = {"table": match.table}
-            if match.column:
-                entry["column"] = match.column
+            if columns:
+                entry["columns"] = columns
             entry["reason"] = match.reason
             matches.append(entry)
         payload: dict[str, Any] = {"ok": True, "matches": matches[:25]}
@@ -288,14 +301,18 @@ class QueryPilotToolkit:
     def _validate_sql(self, arguments: dict[str, Any]) -> dict[str, Any]:
         sql = _string_argument(arguments, "sql", aliases=("query",))
         validation = self.querypilot.validate_sql(sql)
-        errors = [clean_error(error) for error in validation.errors]
-        return {
+        errors = self._public_errors(validation.errors)
+        shown_sql, row_note = _agent_sql(sql, validation.rewritten_sql, validation.access_policy)
+        payload: dict[str, Any] = {
             "ok": validation.valid,
-            "sql": validation.rewritten_sql,
+            "sql": shown_sql,
             "errors": errors,
-            "hints": self._hints(errors),
+            "hints": self._hints(errors, sql),
             "warnings": [clean_error(warning) for warning in validation.warnings],
         }
+        if row_note:
+            payload["note"] = row_note
+        return payload
 
     def _run_sql(self, arguments: dict[str, Any]) -> dict[str, Any]:
         sql = _string_argument(arguments, "sql", aliases=("query",))
@@ -305,15 +322,18 @@ class QueryPilotToolkit:
             # execute_sql validates again, writes the audit record and applies masking.
             result = qp.execute_sql(sql)
         except ValueError as exc:
-            errors = [clean_error(error) for error in precheck.errors] or [clean_error(str(exc))]
-            return _error(f"SQL validation failed: {'; '.join(errors)}", self._hints(errors))
+            errors = self._public_errors(precheck.errors or [str(exc).removeprefix("SQL validation failed: ")])
+            return _error(f"SQL validation failed: {'; '.join(errors)}", self._hints(errors, sql))
         except Exception as exc:  # noqa: BLE001 - database errors go back to the model
-            message = clean_error(str(getattr(exc, "orig", None) or exc))
-            return _error(f"Database error: {message}", self._hints([message]))
+            # Cleaned, with stored values redacted, plus "did you mean" hints.
+            lines = describe_db_error(exc, self.visible_schema(), sql)
+            return _error(lines[0], lines[1:])
 
-        payload: dict[str, Any] = {"ok": True, "sql": result.sql}
-        payload.update(self._rows_payload(result.rows, budget_used=len(result.sql)))
+        shown_sql, row_note = _agent_sql(sql, result.sql, result.access_policy)
+        payload: dict[str, Any] = {"ok": True, "sql": shown_sql}
+        payload.update(self._rows_payload(result.rows, budget_used=len(shown_sql or "")))
         payload["warnings"] = [clean_error(warning) for warning in precheck.warnings]
+        _add_note(payload, row_note)
         return _with_note_last(payload)
 
     def _ask_database(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -329,10 +349,14 @@ class QueryPilotToolkit:
                 )
             ]
             return _error(message, hints)
-        payload: dict[str, Any] = {"ok": True, "sql": answer.sql}
-        payload.update(self._rows_payload(answer.rows, budget_used=len(answer.sql)))
+        shown_sql, row_note = _agent_sql(
+            answer.generated_sql or answer.sql, answer.sql, answer.access_policy
+        )
+        payload: dict[str, Any] = {"ok": True, "sql": shown_sql}
+        payload.update(self._rows_payload(answer.rows, budget_used=len(shown_sql or "")))
         payload["explanation"] = answer.explanation
         payload["warnings"] = [clean_error(warning) for warning in answer.validation.warnings]
+        _add_note(payload, row_note)
         return _with_note_last(payload)
 
     # ------------------------------------------------------------------ helpers
@@ -420,15 +444,27 @@ class QueryPilotToolkit:
             entry["foreign_keys"] = foreign_keys
         return entry
 
-    def _visible_schema(self) -> DatabaseSchema:
-        """The schema minus tables and columns the configuration hides from the model."""
+    def visible_schema(self) -> DatabaseSchema:
+        """The schema minus tables, columns and foreign keys the configuration hides."""
         schema = self.querypilot.get_schema()
+        visible = {table.name.lower(): table for table in schema.tables if self._table_visible(table)}
         tables = []
-        for table in schema.tables:
-            if not self._table_visible(table):
-                continue
+        for table in visible.values():
             columns = [column for column in table.columns if self._column_visible(table, column)]
-            tables.append(table.model_copy(update={"columns": columns}))
+            kept = {column.name.lower() for column in columns}
+            foreign_keys = []
+            for key in table.foreign_keys:
+                referred = visible.get(key.referred_table.split(".")[-1].lower())
+                if referred is None or any(column.lower() not in kept for column in key.columns):
+                    continue
+                referred_columns = {
+                    column.name.lower()
+                    for column in referred.columns
+                    if self._column_visible(referred, column)
+                }
+                if all(column.lower() in referred_columns for column in key.referred_columns):
+                    foreign_keys.append(key)
+            tables.append(table.model_copy(update={"columns": columns, "foreign_keys": foreign_keys}))
         return schema.model_copy(update={"tables": tables})
 
     def _table_visible(self, table: TableSchema) -> bool:
@@ -460,13 +496,23 @@ class QueryPilotToolkit:
             for column, rule in columns.items()
         }
 
-    def _hints(self, errors: list[str]) -> list[str]:
+    def _hints(self, errors: list[str], sql: str | None = None) -> list[str]:
         if not errors:
             return []
         try:
-            return list(repair_hints(errors, self._visible_schema()))
+            return list(repair_hints(errors, self.visible_schema(), sql))
         except Exception:  # noqa: BLE001 - hints are best effort
             return []
+
+    def _public_errors(self, errors: list[str]) -> list[str]:
+        """Validation errors without the names of tables and columns the policy hides."""
+        return public_errors(errors, self.name_of("describe_table"))
+
+    def _redact(self, message: str) -> str:
+        try:
+            return redact_values(message, self.visible_schema())
+        except Exception:  # noqa: BLE001 - fall back to a message without details
+            return "The tool failed with an unexpected error."
 
 
 def default_tool_definitions() -> list[tuple[str, str, dict[str, Any]]]:
@@ -701,6 +747,28 @@ def _fit(items: list[dict[str, Any]], max_chars: int) -> list[dict[str, Any]]:
         kept.append(item)
         used += size
     return kept
+
+
+def _agent_sql(
+    sql: str, rewritten_sql: str | None, access_policy: Mapping[str, Any]
+) -> tuple[str | None, str | None]:
+    """The SQL to show the agent, and a note when row-level filters were applied.
+
+    The rewritten SQL shows the row limit, but with row filters it would also
+    reveal the filter predicates, so the agent then sees its own SQL and a note;
+    the rewritten SQL stays in the audit record.
+    """
+    if rewritten_sql is None:
+        return None, None
+    if access_policy.get("row_filters"):
+        return sql.strip(), ROW_FILTER_NOTE
+    return rewritten_sql, None
+
+
+def _add_note(payload: dict[str, Any], note: str | None) -> None:
+    if note:
+        existing = payload.get("note")
+        payload["note"] = f"{note} {existing}" if existing else note
 
 
 def _with_note_last(payload: dict[str, Any]) -> dict[str, Any]:

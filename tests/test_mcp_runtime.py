@@ -102,9 +102,12 @@ def test_mcp_access_policy_cannot_be_bypassed_by_alias_or_star(
     star_result = server.tools["run_sql"]("SELECT * FROM customers")
 
     assert alias_result["error"].startswith("SQL validation failed")
-    assert "customers.revenue" in alias_result["error"]
+    assert "revenue" not in alias_result["error"]
+    assert "restricted by the access policy" in alias_result["error"]
     assert star_result["error"].startswith("SQL validation failed")
-    assert "customers.revenue" in star_result["error"]
+    # SELECT * would otherwise reveal the name of a column describe_table hides.
+    assert "revenue" not in json.dumps(star_result)
+    assert "restricted by the access policy" in star_result["error"]
     described = server.tools["describe_table"](["customers"])
     assert "revenue" not in json.dumps(described)
 

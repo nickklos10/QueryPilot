@@ -14,7 +14,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (connection, hints, descriptions, access policy, generator) that the CLI, the
   servers and the new `QueryPilot.from_config()` all read.
   `querypilot mcp-config <claude-code|claude-desktop|cursor|vscode|windsurf>`
-  prints a ready-to-paste MCP config that uses an absolute `uvx` path.
+  prints a ready-to-paste MCP config that uses an absolute `uvx` path; with
+  `--config` (or a `./querypilot.yaml`) it sets `QUERYPILOT_CONFIG` to the
+  config's absolute path, so the server keeps its policy and hints when the
+  client starts it from another directory.
   `python -m querypilot` works too.
 - **Connect any SQLAlchemy database.** `QueryPilot.connect(url)` infers the
   sqlglot dialect from the URL or from an `Engine`. A new `SQLAlchemyConnector`
@@ -37,9 +40,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   drop-in `sql_db_*` names), LlamaIndex, OpenAI Agents SDK, Claude Agent SDK
   (in-process MCP server) and plain functions (`querypilot.integrations`).
 - **Grounded generation.** Prompts render compact DDL with primary keys,
-  foreign-key join paths, comments, up to 3 sample values per text column, and
-  business `hints=`/`descriptions=`. Sample values never come from blocked,
-  masked or row-filtered columns. Above `schema_token_budget`, only relevant
+  foreign-key join paths, comments, up to 3 sample values per category-like
+  text column, and business `hints=`/`descriptions=`. Sample values never come
+  from blocked, masked or row-filtered columns, from columns whose names suggest
+  secrets, personal data or free text (names, companies, addresses, IPs, URLs,
+  salaries, notes, descriptions, ...), or from columns with more than 50
+  distinct values in the scan or no repeated value. Above `schema_token_budget`, only relevant
   tables are sent, plus the FK bridge tables between them.
 - **Repair that converges.** Validation errors carry "did you mean"
   suggestions; database errors are cleaned and fed back; an empty result gets
@@ -58,6 +64,30 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     importing `mcp.server.fastmcp` failed.
   - The MCP registry entry installs `querypilot[mcp]`. PyYAML is now a core
     dependency, for `querypilot.yaml`.
+  - Tool results (`run_sql`, `ask_database`) return rows as arrays with a
+    separate `columns` list, not as dicts. `search_schema` matches list their
+    matching columns as `columns` (a list) instead of `column`.
+  - Agent- and model-facing errors no longer leak what the access policy
+    hides: database errors from `run_sql` and the `ask()` repair loop are
+    cleaned, get "did you mean" hints, and have quoted values redacted (e.g.
+    `could not convert string '<redacted>'`); policy errors that name a hidden
+    table or column become one generic "restricted by the access policy"
+    message (also in the `ValueError` from `execute_sql()`/`ask()`). Audit
+    records and `ValidationResult.errors` keep the original errors.
+  - When row-level filters apply, `run_sql`, `validate_sql` and `ask_database`
+    return the agent's own SQL plus a note instead of the rewritten SQL; the
+    rewritten SQL stays in the audit record. `QueryPilotAnswer.generated_sql`
+    holds the SQL the generator wrote.
+  - `QueryPilot.search_schema()` and the server's `/schema` and
+    `/search-schema` endpoints use the policy-visible schema
+    (`QueryPilot.visible_schema()`).
+  - The schema cache is shared with `with_audit_metadata()` copies, so the
+    server no longer re-introspects per request; `refresh_schema()` reaches
+    every copy and also clears cached sample values.
+  - `SQLAlchemyConnector`: MariaDB reached through a `mysql://` URL gets
+    `max_statement_time` instead of `MAX_EXECUTION_TIME`; for a SQLite
+    `Engine`, `PRAGMA query_only` is restored to its previous value even if the
+    rollback fails, and queries are stopped at `timeout_seconds`.
 
 - `ComparisonConfig.ignore_column_names` (suite-YAML-settable) — compare
   candidate results to gold by **values only**, ignoring the column aliases the

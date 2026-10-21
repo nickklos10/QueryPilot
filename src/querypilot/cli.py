@@ -62,6 +62,15 @@ def main(argv: list[str] | None = None) -> int:
         "--db", "--database-url", dest="database_url", default=os.getenv("QUERYPILOT_DATABASE_URL")
     )
     mcp_config_parser.add_argument(
+        "--config",
+        default=os.getenv("QUERYPILOT_CONFIG"),
+        help=(
+            "Project config the server should read (default: ./querypilot.yaml when present). "
+            "Its absolute path goes in QUERYPILOT_CONFIG, since MCP clients start servers "
+            "from another directory."
+        ),
+    )
+    mcp_config_parser.add_argument(
         "--runner",
         default="uvx",
         choices=["uvx", "python"],

@@ -127,3 +127,21 @@ def test_server_enforces_access_policy(demo_db_url: str) -> None:
     assert response.json()["blocked_reason"] == (
         "Column is blocked by access policy: customers.revenue"
     )
+
+
+def test_server_schema_endpoints_hide_what_the_policy_hides(demo_db_url: str) -> None:
+    app = create_app(
+        database_url=demo_db_url,
+        dialect="sqlite",
+        blocked_tables=["invoices"],
+        access_policy=AccessPolicy(blocked_columns={"customers": ["revenue"]}),
+    )
+    client = TestClient(app)
+
+    schema = client.get("/schema").json()
+    search = client.post("/search-schema", json={"query": "revenue invoices"}).json()
+
+    assert [table["name"] for table in schema["tables"]] == ["customers"]
+    assert "revenue" not in [column["name"] for column in schema["tables"][0]["columns"]]
+    assert all(match["table"] != "invoices" for match in search)
+    assert "revenue" not in str(search)

@@ -197,9 +197,8 @@ def run_init(args: argparse.Namespace) -> int:
 
 
 def run_mcp_config(args: argparse.Namespace) -> int:
-    database_url = _absolute_sqlite_url(args.database_url or "sqlite:///path/to/your.db")
     command, command_args = _mcp_launch_command(args.runner)
-    env = {"QUERYPILOT_DATABASE_URL": database_url}
+    env = _mcp_env(args.database_url, getattr(args, "config", None))
     if args.generator:
         env["QUERYPILOT_GENERATOR"] = args.generator
     print(render_mcp_config(args.client, command, command_args, env))
@@ -210,6 +209,39 @@ def run_mcp_config(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
     return 0
+
+
+def _mcp_env(database_url: str | None, config: str | None) -> dict[str, str]:
+    """Server environment: the project config (absolute path) and/or the database URL.
+
+    MCP clients launch servers from their own working directory, where neither
+    ./querypilot.yaml nor relative SQLite paths resolve, so both are made absolute.
+    """
+    config_path = Path(config).expanduser() if config else find_config()
+    env: dict[str, str] = {}
+    if config_path is not None:
+        if not config_path.is_file():
+            raise SystemExit(f"Config file not found: {config_path}")
+        config_path = config_path.resolve()
+        env["QUERYPILOT_CONFIG"] = str(config_path)
+    if database_url:
+        env["QUERYPILOT_DATABASE_URL"] = _absolute_sqlite_url(database_url)
+    elif config_path is None:
+        env["QUERYPILOT_DATABASE_URL"] = "sqlite:///path/to/your.db"
+    else:
+        # A relative SQLite path in the config is relative to the config's directory.
+        configured = _configured_database_url(config_path)
+        absolute = configured and _absolute_sqlite_url(configured, base=config_path.parent)
+        if absolute and absolute != configured:
+            env["QUERYPILOT_DATABASE_URL"] = absolute
+    return env
+
+
+def _configured_database_url(path: Path) -> str | None:
+    try:
+        return load_project_config(path).database_url
+    except Exception:  # noqa: BLE001 - the server reports config errors when it starts
+        return None
 
 
 def render_mcp_config(client: str, command: str, command_args: list[str], env: dict[str, str]) -> str:
@@ -315,7 +347,7 @@ def _render_table_details(table: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _absolute_sqlite_url(database_url: str) -> str:
+def _absolute_sqlite_url(database_url: str, base: Path | None = None) -> str:
     # MCP clients launch servers from their own working directory, so relative paths break.
     prefix = "sqlite:///"
     if not database_url.startswith(prefix) or database_url.startswith(prefix + "/"):
@@ -323,7 +355,10 @@ def _absolute_sqlite_url(database_url: str) -> str:
     path = database_url[len(prefix) :]
     if path in {"", ":memory:"} or path.startswith("path/to/"):
         return database_url
-    return prefix + str(Path(path).expanduser().resolve())
+    resolved = Path(path).expanduser()
+    if base is not None and not resolved.is_absolute():
+        resolved = base / resolved
+    return prefix + str(resolved.resolve())
 
 
 def _mcp_launch_command(runner: str) -> tuple[str, list[str]]:

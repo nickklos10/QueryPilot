@@ -8,7 +8,15 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
 from querypilot.core.types import ColumnSchema, DatabaseSchema, ForeignKey, TableSchema
-from querypilot.validation.feedback import clean_error, describe_db_error, repair_hints
+from querypilot.validation.feedback import (
+    INVALID_ROW_FILTER_ERROR,
+    clean_error,
+    describe_db_error,
+    public_errors,
+    redact_values,
+    repair_hints,
+    restricted_error,
+)
 
 
 def _schema() -> DatabaseSchema:
@@ -94,18 +102,21 @@ def test_ambiguous_column_names_owning_tables() -> None:
         "Column is not allowed by access policy: customers.segment",
     ],
 )
-def test_restricted_column_hint_says_answer_without_it(error: str) -> None:
+def test_restricted_column_hint_does_not_name_the_column(error: str) -> None:
     hint = repair_hints([error], _schema())[0]
 
-    assert hint.startswith("customers.segment is restricted")
-    assert "answer without it" in hint
+    assert hint.startswith("A column the query uses is restricted")
+    assert "segment" not in hint
 
 
 @pytest.mark.parametrize(
     "error", ["Blocked table referenced: payroll", "Table is not in allowed_tables: payroll"]
 )
-def test_restricted_table_hint(error: str) -> None:
-    assert repair_hints([error], _schema())[0].startswith("Table payroll is restricted")
+def test_restricted_table_hint_does_not_name_the_table(error: str) -> None:
+    hint = repair_hints([error], _schema())[0]
+
+    assert hint.startswith("A table the query uses is restricted")
+    assert "payroll" not in hint
 
 
 def test_cartesian_join_hint_lists_foreign_keys() -> None:
@@ -175,3 +186,60 @@ def test_describe_db_error_adds_timeout_hint(message: str) -> None:
     lines = describe_db_error(_PgError(message), _schema())
 
     assert lines[1].startswith("The query took too long")
+
+
+# --------------------------------------------------------------------------- leaks
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            'invalid input syntax for type integer: "alice@x.com"',
+            'invalid input syntax for type integer: "<redacted>"',
+        ),
+        (
+            "Conversion Error: Could not convert string 'alice@x.com' to INT32",
+            "Conversion Error: Could not convert string '<redacted>' to INT32",
+        ),
+        # Values may contain quotes, and apostrophes inside words are not quotes.
+        ("Truncated incorrect INTEGER value: 'O'Brien'", "Truncated incorrect INTEGER value: '<redacted>'"),
+        ("can't convert 'bob' now", "can't convert '<redacted>' now"),
+        ("could not convert string 'cut off", "could not convert string '<redacted>'"),
+        # Schema names (also qualified) and the query's own tokens are kept.
+        ('column "customers.segment" must appear in GROUP BY', 'column "customers.segment" must appear in GROUP BY'),
+        ("Table 'shop.customers' doesn't exist", "Table 'shop.customers' doesn't exist"),
+        ('near "SELEC": syntax error', 'near "SELEC": syntax error'),
+    ],
+)
+def test_redact_values_keeps_identifiers_and_hides_stored_values(message: str, expected: str) -> None:
+    assert redact_values(message, _schema(), "SELEC segment FROM customers") == expected
+
+
+def test_describe_db_error_redacts_values_but_keeps_the_unknown_name() -> None:
+    value = describe_db_error(_PgError('invalid input syntax for type integer: "alice@x.com"'), _schema())
+    unknown = describe_db_error(_PgError('column "segmnt" does not exist'), _schema())
+
+    assert value == ['Database error: invalid input syntax for type integer: "<redacted>"']
+    assert unknown[0] == 'Database error: column "segmnt" does not exist'
+    assert "did you mean customers.segment?" in unknown[1]
+
+
+def test_public_errors_hide_restricted_names_and_row_filters() -> None:
+    errors = [
+        "Column is blocked by access policy: customers.revenue",
+        "Column is not allowed by access policy: customers.notes",
+        "Blocked table referenced: payroll",
+        "Invalid row filter for orders: Invalid expression / Unexpected token. tenant_id = = 42",
+        "Unknown column: segmnt",
+    ]
+
+    public = public_errors(errors, "describe_table")
+
+    assert public == [
+        restricted_error("describe_table"),
+        INVALID_ROW_FILTER_ERROR,
+        "Unknown column: segmnt",
+    ]
+    assert "restricted by the access policy" in public[0] and "describe_table" in public[0]
+    assert not any(name in " ".join(public) for name in ("revenue", "notes", "payroll", "tenant_id"))

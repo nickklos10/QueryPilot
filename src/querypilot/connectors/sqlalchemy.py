@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
 from typing import Any
 
@@ -40,7 +41,8 @@ class SQLAlchemyConnector(BaseConnector):
     - MySQL / MariaDB: ``START TRANSACTION READ ONLY`` plus a per-session statement timeout.
     - Oracle: ``SET TRANSACTION READ ONLY``.
     - Snowflake: ``STATEMENT_TIMEOUT_IN_SECONDS``; Redshift: ``statement_timeout``.
-    - SQLite (when given an Engine): ``PRAGMA query_only`` for the duration of the query.
+    - SQLite (when given an Engine): ``PRAGMA query_only`` for the duration of the query
+      (then restored to its previous value) and a progress-handler deadline at the timeout.
 
     Other engines (SQL Server, BigQuery, Trino, Databricks, ...) rely on rollback alone,
     which does not undo non-transactional side effects. Connect with a database role
@@ -73,28 +75,34 @@ class SQLAlchemyConnector(BaseConnector):
     def execute_readonly(self, sql: str) -> tuple[list[dict], int]:
         with self.engine.connect() as conn:
             transaction = conn.begin()
+            resets: list[str] = []
             try:
-                for statement in self._session_statements():
+                resets = self._reset_statements(conn)
+                for statement in self._session_statements(conn):
                     conn.execute(text(statement))
                 with self._timeout(conn):
                     result = conn.execute(text(sql))
                     rows = [dict(row._mapping) for row in result.fetchall()]
             finally:
-                transaction.rollback()
-                for statement in self._reset_statements():
-                    conn.execute(text(statement))
-                    conn.rollback()
+                try:
+                    transaction.rollback()
+                finally:
+                    # Session settings are restored even when the rollback fails.
+                    for statement in resets:
+                        conn.execute(text(statement))
+                        conn.rollback()
         return rows, len(rows)
 
-    def _session_statements(self) -> list[str]:
+    def _session_statements(self, conn: Connection | None = None) -> list[str]:
         seconds = self.timeout_seconds
+        if self.backend in {"mysql", "mariadb"} and _is_mariadb(conn, self.backend):
+            # MariaDB rejects MAX_EXECUTION_TIME, also when reached via a mysql:// URL.
+            return [f"SET SESSION max_statement_time = {seconds}", "START TRANSACTION READ ONLY"]
         if self.backend == "mysql":
             return [
                 f"SET SESSION MAX_EXECUTION_TIME = {seconds * 1000}",
                 "START TRANSACTION READ ONLY",
             ]
-        if self.backend == "mariadb":
-            return [f"SET SESSION max_statement_time = {seconds}", "START TRANSACTION READ ONLY"]
         if self.backend == "oracle":
             return ["SET TRANSACTION READ ONLY"]
         if self.backend == "snowflake":
@@ -105,17 +113,29 @@ class SQLAlchemyConnector(BaseConnector):
             return ["PRAGMA query_only = ON"]
         return []
 
-    def _reset_statements(self) -> list[str]:
+    def _reset_statements(self, conn: Connection) -> list[str]:
+        """Statements that restore the session settings changed for the query."""
         if self.backend == "sqlite":
-            return ["PRAGMA query_only = OFF"]
+            previous = conn.execute(text("PRAGMA query_only")).scalar()
+            return [f"PRAGMA query_only = {1 if previous else 0}"]
         return []
 
     @contextmanager
     def _timeout(self, conn: Connection):
-        """Interrupt the query at the timeout on drivers that support it (DuckDB)."""
+        """Stop the query at the timeout on drivers that support it (DuckDB, SQLite)."""
+        dbapi_connection = conn.connection.dbapi_connection
+        if self.backend == "sqlite":
+            set_handler = getattr(dbapi_connection, "set_progress_handler", None)
+            if set_handler is not None:
+                set_handler(_deadline_handler(self.timeout_seconds), 1000)
+                try:
+                    yield
+                finally:
+                    set_handler(None, 1000)
+                return
         interrupt = None
         if self.backend == "duckdb":
-            interrupt = getattr(conn.connection.dbapi_connection, "interrupt", None)
+            interrupt = getattr(dbapi_connection, "interrupt", None)
         if interrupt is None:
             yield
             return
@@ -125,6 +145,24 @@ class SQLAlchemyConnector(BaseConnector):
             yield
         finally:
             timer.cancel()
+
+
+def _is_mariadb(conn: Connection | None, backend: str) -> bool:
+    """MariaDB is detected on the connection: a mysql+pymysql:// URL can reach either server."""
+    if backend == "mariadb":
+        return True
+    dialect = getattr(conn, "dialect", None)
+    return bool(getattr(dialect, "is_mariadb", False))
+
+
+def _deadline_handler(timeout_seconds: int):
+    """SQLite progress handler that aborts the statement once the timeout has passed."""
+    deadline = time.monotonic() + timeout_seconds
+
+    def handler() -> int:
+        return 1 if time.monotonic() > deadline else 0
+
+    return handler
 
 
 def build_engine(database_url: str | URL, engine_kwargs: dict[str, Any] | None = None) -> Engine:

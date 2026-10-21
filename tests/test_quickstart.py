@@ -188,3 +188,51 @@ def test_from_config_reads_project_file(demo_url: str, tmp_path: Path, monkeypat
     assert qp.config.hints == ["x"]
     with pytest.raises(FileNotFoundError):
         QueryPilot.from_config(tmp_path / "missing.yaml")
+
+
+def test_mcp_config_points_the_server_at_the_project_config(tmp_path: Path, monkeypatch, capsys) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "querypilot.yaml").write_text(
+        "database_url: sqlite:///data/app.db\nblocked_tables: [payroll]\n"
+    )
+    monkeypatch.delenv("QUERYPILOT_CONFIG", raising=False)
+    monkeypatch.delenv("QUERYPILOT_DATABASE_URL", raising=False)
+    monkeypatch.chdir(project)
+
+    # ./querypilot.yaml is picked up, and --db is not required.
+    assert main(["mcp-config", "cursor"]) == 0
+    env = json.loads(capsys.readouterr().out)["mcpServers"]["querypilot"]["env"]
+
+    assert env["QUERYPILOT_CONFIG"] == str((project / "querypilot.yaml").resolve())
+    # The config's relative SQLite path is resolved against the config's directory.
+    assert env["QUERYPILOT_DATABASE_URL"] == f"sqlite:///{(project / 'data' / 'app.db').resolve()}"
+
+    monkeypatch.chdir(tmp_path)
+    assert main(["mcp-config", "claude-code", "--config", "project/querypilot.yaml", "--db", "postgresql://u@h/db"]) == 0
+    out = capsys.readouterr().out
+    assert f"--env QUERYPILOT_CONFIG={(project / 'querypilot.yaml').resolve()}" in out
+    assert "--env QUERYPILOT_DATABASE_URL=postgresql://u@h/db" in out
+
+    with pytest.raises(SystemExit, match="Config file not found"):
+        main(["mcp-config", "cursor", "--config", "missing.yaml"])
+
+
+def test_querypilot_config_env_is_honoured_from_another_directory(
+    demo_url: str, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    config = tmp_path / "project" / "querypilot.yaml"
+    config.parent.mkdir()
+    config.write_text(f"database_url: {demo_url}\nmax_rows: 1\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.delenv("QUERYPILOT_DATABASE_URL", raising=False)
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setenv("QUERYPILOT_CONFIG", str(config))
+
+    assert main(["sql", "SELECT customer_name FROM customers"]) == 0
+    assert "(1 row)" in capsys.readouterr().out
+
+    monkeypatch.setenv("QUERYPILOT_CONFIG", str(tmp_path / "missing.yaml"))
+    with pytest.raises(SystemExit, match="Config file not found"):
+        main(["sql", "SELECT 1"])

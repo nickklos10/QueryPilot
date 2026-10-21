@@ -97,7 +97,10 @@ class QueryResult(BaseModel):
 class QueryPilotAnswer(BaseModel):
     audit_id: str | None = None
     question: str
+    # The executed SQL (after the validator's rewrite: row limit, row filters).
     sql: str
+    # The SQL as the generator wrote it.
+    generated_sql: str | None = None
     rows: list[dict] = Field(default_factory=list)
     explanation: str
     validation: ValidationResult
