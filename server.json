@@ -17,6 +17,14 @@
       "identifier": "querypilot",
       "version": "0.1.1",
       "runtimeHint": "uvx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--from",
+          "value": "querypilot[mcp]",
+          "description": "Installs the mcp extra; the bare package does not include the MCP SDK."
+        }
+      ],
       "transport": {
         "type": "stdio"
       },
@@ -30,20 +38,14 @@
       "environmentVariables": [
         {
           "name": "QUERYPILOT_DATABASE_URL",
-          "description": "SQLAlchemy-style database connection URL, e.g. sqlite:///demo.db or postgresql://user:pass@host:5432/db. Equivalent to --database-url.",
+          "description": "SQLAlchemy database URL, e.g. sqlite:///demo.db, postgresql://user:pass@host:5432/db, duckdb:///analytics.duckdb, mysql+pymysql://user:pass@host/db. Equivalent to --db.",
           "isRequired": true,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "QUERYPILOT_DIALECT",
-          "description": "SQL dialect for the connector. Equivalent to --dialect.",
-          "default": "sqlite",
-          "choices": [
-            "sqlite",
-            "postgres",
-            "postgresql"
-          ],
+          "description": "SQL dialect (sqlglot name, e.g. postgres, mysql, duckdb, snowflake, bigquery, tsql). Inferred from QUERYPILOT_DATABASE_URL when omitted. Equivalent to --dialect.",
           "format": "string"
         },
         {
@@ -63,6 +65,19 @@
           "description": "JSON-encoded AccessPolicy (blocked_columns, allowed_columns, row_filters, masking_rules) enforced before execution. Equivalent to --access-policy-json.",
           "isRequired": false,
           "isSecret": false,
+          "format": "string"
+        },
+        {
+          "name": "QUERYPILOT_GENERATOR",
+          "description": "LLM used by the ask_database tool: auto (picks openai or anthropic from OPENAI_API_KEY / ANTHROPIC_API_KEY), openai, anthropic, openai-compatible, or demo. Without an LLM the server exposes only the schema and SQL tools.",
+          "default": "auto",
+          "choices": [
+            "auto",
+            "openai",
+            "anthropic",
+            "openai-compatible",
+            "demo"
+          ],
           "format": "string"
         },
         {

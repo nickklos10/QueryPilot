@@ -1,8 +1,22 @@
 # 06 - MCP server
 
 Run QueryPilot as an MCP tool server so any MCP client (Claude Desktop, Claude
-Code, etc.) can safely query a database through the four QueryPilot tools:
-`ask_database`, `search_schema`, `validate_sql`, `execute_sql`.
+Code, Cursor, etc.) can safely query a database through QueryPilot's tools:
+
+| Tool | Use it to |
+| --- | --- |
+| `list_tables` | see the tables and views the policy allows (start here) |
+| `describe_table` | get columns, keys, foreign keys and example values before writing SQL |
+| `search_schema` | find tables/columns by keyword on large databases |
+| `run_sql` | run one validated, row-limited, read-only SELECT |
+| `validate_sql` | check a query without running it |
+| `ask_database` | natural-language question (only when a real SQL generator is configured) |
+
+Every tool is annotated `readOnlyHint: true, destructiveHint: false`, the server
+sends workflow `instructions` to the client, and failures come back as
+`{"ok": false, "error": ..., "hints": [...]}` so the model can fix its SQL and retry.
+Tables in `blocked_tables` and columns blocked by the access policy are hidden
+from `list_tables` / `describe_table` as well as rejected at validation time.
 
 ## Run the server
 

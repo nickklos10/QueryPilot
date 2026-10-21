@@ -1,30 +1,91 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
 
-from querypilot import QueryPilot
-from querypilot.access import AccessPolicy
+from querypilot.quickstart import (
+    DEMO_DB_FILENAME,
+    MCP_CLIENTS,
+    add_connection_args,
+    connect_from_args,
+    run_ask,
+    run_demo,
+    run_init,
+    run_mcp_config,
+    run_schema,
+    run_sql,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="querypilot")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    demo_parser = subparsers.add_parser(
+        "demo", help="Create a demo SQLite database and run a validated query against it."
+    )
+    demo_parser.add_argument("--path", default=DEMO_DB_FILENAME, help="Where to write the demo DB.")
+
+    schema_parser = subparsers.add_parser(
+        "schema", help="List tables, or describe the named tables (columns, keys, sample values)."
+    )
+    add_connection_args(schema_parser, generator=False)
+    schema_parser.add_argument("tables", nargs="*", help="Tables to describe.")
+    schema_parser.add_argument("--json", action="store_true", help="Print the raw JSON payload.")
+
+    sql_parser = subparsers.add_parser("sql", help="Validate and run a SQL query safely.")
+    add_connection_args(sql_parser, generator=False)
+    sql_parser.add_argument("sql", help="SQL to validate and run.")
+    sql_parser.add_argument(
+        "--validate-only", action="store_true", help="Validate and show the rewritten SQL without running it."
+    )
+    sql_parser.add_argument("--json", action="store_true", help="Print the raw JSON payload.")
+
+    ask_parser = subparsers.add_parser("ask", help="Answer a question in natural language with an LLM.")
+    add_connection_args(ask_parser)
+    ask_parser.add_argument("question", help="Question to answer.")
+    ask_parser.add_argument("--json", action="store_true", help="Print the full answer as JSON.")
+
+    init_parser = subparsers.add_parser("init", help="Write a querypilot.yaml project config.")
+    init_parser.add_argument("--db", "--database-url", dest="database_url", default=os.getenv("QUERYPILOT_DATABASE_URL"))
+    init_parser.add_argument("--dialect", default=os.getenv("QUERYPILOT_DIALECT"))
+    init_parser.add_argument("--path", default="querypilot.yaml")
+    init_parser.add_argument("--force", action="store_true", help="Overwrite an existing file.")
+
+    mcp_config_parser = subparsers.add_parser(
+        "mcp-config", help="Print the config that adds the QueryPilot MCP server to an MCP client."
+    )
+    mcp_config_parser.add_argument("client", choices=MCP_CLIENTS)
+    mcp_config_parser.add_argument(
+        "--db", "--database-url", dest="database_url", default=os.getenv("QUERYPILOT_DATABASE_URL")
+    )
+    mcp_config_parser.add_argument(
+        "--runner",
+        default="uvx",
+        choices=["uvx", "python"],
+        help="uvx installs querypilot[mcp] on demand; python reuses this environment.",
+    )
+    mcp_config_parser.add_argument(
+        "--generator", default=None, help="Generator the server uses for ask_database (default: auto)."
+    )
+
     serve_parser = subparsers.add_parser("serve", help="Run the FastAPI QueryPilot server.")
-    _add_runtime_args(serve_parser)
+    add_connection_args(serve_parser)
     serve_parser.add_argument("--host", default=os.getenv("QUERYPILOT_HOST", "127.0.0.1"))
     serve_parser.add_argument("--port", type=int, default=int(os.getenv("QUERYPILOT_PORT", "8000")))
 
     mcp_parser = subparsers.add_parser("mcp", help="Run the QueryPilot MCP server.")
-    _add_runtime_args(mcp_parser)
+    add_connection_args(mcp_parser)
     mcp_parser.add_argument(
         "--transport",
         default=os.getenv("QUERYPILOT_MCP_TRANSPORT", "stdio"),
         choices=["stdio", "streamable-http", "sse"],
+    )
+    mcp_parser.add_argument("--host", default=os.getenv("QUERYPILOT_HOST"), help="Bind host for HTTP transports.")
+    mcp_parser.add_argument(
+        "--port", type=int, default=_env_port(), help="Bind port for HTTP transports."
     )
 
     eval_parser = subparsers.add_parser("eval", help="Eval-driven SQL reliability harness.")
@@ -77,6 +138,16 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    quickstart_commands = {
+        "demo": run_demo,
+        "schema": run_schema,
+        "sql": run_sql,
+        "ask": run_ask,
+        "init": run_init,
+        "mcp-config": run_mcp_config,
+    }
+    if args.command in quickstart_commands:
+        return quickstart_commands[args.command](args)
     if args.command == "serve":
         _serve(args)
         return 0
@@ -98,22 +169,6 @@ def main(argv: list[str] | None = None) -> int:
             return _eval_init(args)
         raise SystemExit(f"Unknown eval subcommand: {args.eval_command}")
     return 0
-
-
-def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--database-url", default=os.getenv("QUERYPILOT_DATABASE_URL"))
-    parser.add_argument("--dialect", default=os.getenv("QUERYPILOT_DIALECT"), help="SQL dialect; inferred from the URL when omitted.")
-    parser.add_argument("--max-rows", type=int, default=int(os.getenv("QUERYPILOT_MAX_ROWS", "100")))
-    parser.add_argument(
-        "--timeout-seconds",
-        type=int,
-        default=int(os.getenv("QUERYPILOT_TIMEOUT_SECONDS", "10")),
-    )
-    parser.add_argument(
-        "--access-policy-json",
-        default=os.getenv("QUERYPILOT_ACCESS_POLICY_JSON"),
-        help="JSON object for AccessPolicy configuration.",
-    )
 
 
 def _add_eval_replay_args(parser: argparse.ArgumentParser) -> None:
@@ -367,8 +422,6 @@ def _add_eval_run_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _serve(args: argparse.Namespace) -> None:
-    if not args.database_url:
-        raise SystemExit("--database-url or QUERYPILOT_DATABASE_URL is required.")
     try:
         import uvicorn
     except ImportError as exc:
@@ -376,31 +429,18 @@ def _serve(args: argparse.Namespace) -> None:
 
     from querypilot.server.app import create_app
 
-    app = create_app(
-        database_url=args.database_url,
-        dialect=args.dialect,
-        max_rows=args.max_rows,
-        timeout_seconds=args.timeout_seconds,
-        access_policy=_access_policy_from_args(args),
-    )
+    app = create_app(connect_from_args(args))
     uvicorn.run(app, host=args.host, port=args.port)
 
 
 def _mcp(args: argparse.Namespace) -> None:
-    if not args.database_url:
-        raise SystemExit("--database-url or QUERYPILOT_DATABASE_URL is required.")
+    try:
+        from querypilot.mcp.server import create_mcp_server, run_mcp_server
 
-    from querypilot.mcp.server import create_mcp_server
-
-    qp = QueryPilot.connect(
-        database_url=args.database_url,
-        dialect=args.dialect,
-        max_rows=args.max_rows,
-        timeout_seconds=args.timeout_seconds,
-        access_policy=_access_policy_from_args(args),
-    )
-    server = create_mcp_server(qp)
-    server.run(transport=args.transport)
+        server = create_mcp_server(connect_from_args(args))
+    except ImportError as exc:
+        raise SystemExit(f"{exc}\nRun it with: uvx --from \"querypilot[mcp]\" querypilot mcp") from exc
+    run_mcp_server(server, args.transport, host=args.host, port=args.port)
 
 
 def _eval_run(args: argparse.Namespace) -> int:
@@ -616,14 +656,9 @@ def _eval_import(args: argparse.Namespace) -> int:
     return 0
 
 
-def _access_policy_from_args(args: argparse.Namespace) -> AccessPolicy | None:
-    if not args.access_policy_json:
-        return None
-    try:
-        payload = json.loads(args.access_policy_json)
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"Invalid --access-policy-json: {exc}") from exc
-    return AccessPolicy.model_validate(payload)
+def _env_port() -> int | None:
+    value = os.getenv("QUERYPILOT_PORT")
+    return int(value) if value else None
 
 
 if __name__ == "__main__":
