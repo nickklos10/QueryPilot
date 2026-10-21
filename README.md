@@ -117,7 +117,7 @@ tools = as_langchain_tools(qp, naming="langchain")  # sql_db_list_tables, sql_db
 
 When QueryPilot writes the SQL itself (`ask`, `ask_database`, evals), it uses the techniques with the largest measured gains in the text-to-SQL literature. The sources and numbers are in [docs/research/developer-needs.md](docs/research/developer-needs.md).
 
-- **Grounded schema.** The prompt shows each table as compact DDL with primary keys, foreign-key join paths, comments and up to 3 real sample values per text column. Sample values are never drawn from blocked, masked or row-filtered columns.
+- **Grounded schema.** The prompt shows each table as compact DDL with primary keys, foreign-key join paths, comments and real values for category-like text columns: every value when there are 10 or fewer, otherwise the 3 most common. Sample values are never drawn from blocked, masked or row-filtered columns.
 - **Your business rules.** Pass `hints=` and `descriptions=` to `connect()`, or set them in `querypilot.yaml`, for definitions such as "revenue means paid invoices only".
 - **Pruning only when needed.** Below `schema_token_budget` (default 6000 tokens) the full schema is sent. Above it, QueryPilot sends the relevant tables plus the foreign-key bridge tables that join them.
 - **A repair loop that converges.** Validation errors get "did you mean" hints. Database errors are cleaned before they go back to the model. An empty result triggers one gentle review. Up to 3 attempts by default.

@@ -40,7 +40,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   drop-in `sql_db_*` names), LlamaIndex, OpenAI Agents SDK, Claude Agent SDK
   (in-process MCP server) and plain functions (`querypilot.integrations`).
 - **Grounded generation.** Prompts render compact DDL with primary keys,
-  foreign-key join paths, comments, up to 3 sample values per category-like
+  foreign-key join paths, comments, up to 3 sample values (every value for enums of 10 or fewer) per category-like
   text column, and business `hints=`/`descriptions=`. Sample values never come
   from blocked, masked or row-filtered columns, from columns whose names suggest
   secrets, personal data or free text (names, companies, addresses, IPs, URLs,
