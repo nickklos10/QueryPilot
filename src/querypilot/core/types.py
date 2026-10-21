@@ -7,11 +7,25 @@ class ColumnSchema(BaseModel):
     name: str
     type: str
     nullable: bool = True
+    primary_key: bool = False
+    comment: str | None = None
+    # A few distinct stored values, shown to the model so it filters on real literals.
+    sample_values: list[str] = Field(default_factory=list)
+
+
+class ForeignKey(BaseModel):
+    columns: list[str]
+    referred_table: str
+    referred_columns: list[str]
 
 
 class TableSchema(BaseModel):
     name: str
     columns: list[ColumnSchema] = Field(default_factory=list)
+    schema_name: str | None = None
+    comment: str | None = None
+    foreign_keys: list[ForeignKey] = Field(default_factory=list)
+    is_view: bool = False
 
     def get_column(self, name: str) -> ColumnSchema | None:
         lowered = name.lower()

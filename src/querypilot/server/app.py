@@ -37,11 +37,11 @@ def create_app(
     querypilot: QueryPilot | None = None,
     *,
     database_url: str | None = None,
-    dialect: str = "sqlite",
+    dialect: str | None = None,
     readonly: bool = True,
     max_rows: int = 100,
     timeout_seconds: int = 10,
-    max_generation_attempts: int = 2,
+    max_generation_attempts: int = 3,
     allowed_tables: list[str] | None = None,
     blocked_tables: list[str] | None = None,
     safety_policy: SafetyPolicy | None = None,
@@ -63,7 +63,7 @@ def create_app(
     app = FastAPI(
         title="QueryPilot",
         description="Safe SQL tool layer for AI agents.",
-        version="0.1.0",
+        version=_package_version(),
     )
     app.state.querypilot = qp
 
@@ -131,7 +131,7 @@ def create_app(
 def _connect_querypilot(
     *,
     database_url: str | None,
-    dialect: str,
+    dialect: str | None,
     readonly: bool,
     max_rows: int,
     timeout_seconds: int,
@@ -155,3 +155,12 @@ def _connect_querypilot(
         safety_policy=safety_policy,
         access_policy=access_policy,
     )
+
+
+def _package_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("querypilot")
+    except PackageNotFoundError:
+        return "0.0.0"

@@ -14,8 +14,11 @@ from querypilot.audit import (
     QueryAuditRecord,
 )
 from querypilot.connectors.base import BaseConnector
-from querypilot.connectors.postgres import PostgresConnector
-from querypilot.connectors.sqlite import SQLiteConnector
+from querypilot.connectors.registry import (
+    create_connector,
+    dialect_from_url,
+    normalize_dialect,
+)
 from querypilot.core.config import QueryPilotConfig, SafetyPolicy
 from querypilot.core.types import (
     DatabaseSchema,
@@ -28,6 +31,7 @@ from querypilot.core.types import (
 from querypilot.execution.formatter import explain_result
 from querypilot.execution.runner import execute
 from querypilot.generation.sql_generator import DemoSQLGenerator, SQLGenerator
+from querypilot.schema.enrich import enrich_schema
 from querypilot.schema.search import search_schema as search_schema_impl
 from querypilot.validation.validator import SQLValidator
 
@@ -47,16 +51,17 @@ class QueryPilot:
         self.validator = SQLValidator(config)
         self.audit_sink = audit_sink or InMemoryAuditSink()
         self.audit_metadata = audit_metadata or AuditMetadata()
+        self._schema: DatabaseSchema | None = None
 
     @classmethod
     def connect(
         cls,
         database_url: str,
-        dialect: str = "sqlite",
+        dialect: str | None = None,
         readonly: bool = True,
         max_rows: int = 100,
         timeout_seconds: int = 10,
-        max_generation_attempts: int = 2,
+        max_generation_attempts: int = 3,
         allowed_tables: list[str] | None = None,
         blocked_tables: list[str] | None = None,
         safety_policy: SafetyPolicy | None = None,
@@ -64,19 +69,39 @@ class QueryPilot:
         generator: SQLGenerator | None = None,
         audit_sink: AuditSink | None = None,
         audit_metadata: AuditMetadata | None = None,
+        *,
+        schemas: list[str] | None = None,
+        hints: list[str] | None = None,
+        descriptions: dict[str, str] | None = None,
+        sample_values: int = 3,
+        schema_token_budget: int = 6000,
+        engine_kwargs: dict[str, Any] | None = None,
     ) -> QueryPilot:
+        """Connect to any SQLAlchemy URL; the SQL dialect is inferred from it unless given."""
+        resolved_dialect = normalize_dialect(dialect) if dialect else dialect_from_url(database_url)
         config = QueryPilotConfig(
-            dialect=dialect,
+            dialect=resolved_dialect,
             readonly=readonly,
             max_rows=max_rows,
             timeout_seconds=timeout_seconds,
             max_generation_attempts=max_generation_attempts,
             allowed_tables=allowed_tables,
             blocked_tables=blocked_tables,
+            schemas=schemas,
+            hints=hints or [],
+            descriptions=descriptions or {},
+            sample_values=sample_values,
+            schema_token_budget=schema_token_budget,
             safety_policy=safety_policy or SafetyPolicy(),
             access_policy=access_policy or AccessPolicy(),
         )
-        connector = _connector_for(database_url, dialect, timeout_seconds)
+        connector = create_connector(
+            database_url,
+            resolved_dialect,
+            timeout_seconds=timeout_seconds,
+            schemas=schemas,
+            engine_kwargs=engine_kwargs,
+        )
         return cls(
             connector=connector,
             config=config,
@@ -86,7 +111,15 @@ class QueryPilot:
         )
 
     def get_schema(self) -> DatabaseSchema:
-        return self.connector.get_schema()
+        """Return the introspected schema, cached after the first call."""
+        if self._schema is None:
+            self._schema = enrich_schema(self.connector.get_schema(), self.connector, self.config)
+        return self._schema
+
+    def refresh_schema(self) -> DatabaseSchema:
+        """Drop the cached schema and introspect the database again."""
+        self._schema = None
+        return self.get_schema()
 
     def search_schema(self, query: str) -> list[SchemaMatch]:
         matches = search_schema_impl(self.get_schema(), query)
@@ -234,13 +267,15 @@ class QueryPilot:
         return self.audit_sink.recent(limit)
 
     def with_audit_metadata(self, metadata: AuditMetadata | None) -> QueryPilot:
-        return QueryPilot(
+        scoped = QueryPilot(
             connector=self.connector,
             config=self.config,
             generator=self.generator,
             audit_sink=self.audit_sink,
             audit_metadata=metadata or AuditMetadata(),
         )
+        scoped._schema = self._schema
+        return scoped
 
     def _write_audit_record(self, operation: str, **kwargs) -> QueryAuditRecord:
         record = QueryAuditRecord.create(
@@ -270,15 +305,6 @@ class QueryPilot:
             }
             for row in rows
         ]
-
-
-def _connector_for(database_url: str, dialect: str, timeout_seconds: int) -> BaseConnector:
-    normalized = dialect.lower()
-    if normalized == "sqlite":
-        return SQLiteConnector(database_url, timeout_seconds=timeout_seconds)
-    if normalized in {"postgres", "postgresql"}:
-        return PostgresConnector(database_url, timeout_seconds=timeout_seconds)
-    raise ValueError(f"Unsupported dialect: {dialect}")
 
 
 def _mask_value(value: Any, mode: str) -> Any:

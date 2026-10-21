@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--database-url", default=os.getenv("QUERYPILOT_DATABASE_URL"))
-    parser.add_argument("--dialect", default=os.getenv("QUERYPILOT_DIALECT", "sqlite"))
+    parser.add_argument("--dialect", default=os.getenv("QUERYPILOT_DIALECT"), help="SQL dialect; inferred from the URL when omitted.")
     parser.add_argument("--max-rows", type=int, default=int(os.getenv("QUERYPILOT_MAX_ROWS", "100")))
     parser.add_argument(
         "--timeout-seconds",
