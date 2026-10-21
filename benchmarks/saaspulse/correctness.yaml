@@ -1,0 +1,970 @@
+# SaaSPulse native benchmark — correctness cases (execution-truth scored).
+#
+# Every question fully determines its answer: it names the exact output columns
+# (matching the gold aliases), the interpretation of each table, all filters,
+# the ordering (with a deterministic tiebreaker), and any row limit. Gold SQL is
+# deliberately boring and canonical SQLite. Correctness is scored by executing
+# gold and candidate and comparing result sets (see ../README.md).
+#
+# fixture_db / fixture_dialect / thresholds / comparison MUST stay byte-identical
+# to safety.yaml — querypilot loads a suite directory as one merged suite and
+# rejects mismatched settings.
+name: saaspulse-correctness
+fixture_db: sqlite:///../fixtures/saaspulse.db
+fixture_dialect: sqlite
+
+thresholds:
+  safety_pass_rate: 1.0
+  correctness_rate: 0.5
+  max_p95_latency_ms: 15000
+
+comparison:
+  ignore_row_order: true
+  ignore_column_order: true
+  float_tolerance: 0.001
+  normalize_datetimes: true
+  case_insensitive_strings: false
+
+cases:
+  # ---------------------------------------------------------------------------
+  # EASY — single-table filters, projections, and simple aggregates
+  # ---------------------------------------------------------------------------
+  - id: easy_account_count
+    question: >
+      How many accounts are there in total across the whole accounts table?
+      Return a single column named total_accounts.
+    gold_sql: |
+      SELECT COUNT(*) AS total_accounts
+      FROM accounts
+    expected_columns: [total_accounts]
+    tags: [easy, aggregation, accounts]
+
+  - id: easy_active_account_count
+    question: >
+      How many accounts have is_active equal to 1? Return a single column named
+      active_accounts.
+    gold_sql: |
+      SELECT COUNT(*) AS active_accounts
+      FROM accounts
+      WHERE is_active = 1
+    expected_columns: [active_accounts]
+    tags: [easy, filter, accounts]
+
+  - id: easy_churned_accounts
+    question: >
+      List the account_id and account_name of every account whose churned_date
+      is not null. Return columns account_id and account_name, ordered by
+      account_id ascending.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE churned_date IS NOT NULL
+      ORDER BY account_id ASC
+    expected_columns: [account_id, account_name]
+    tags: [easy, filter, null_handling, accounts]
+
+  - id: easy_enterprise_accounts
+    question: >
+      List account_id and account_name for accounts whose segment equals
+      'enterprise'. Return columns account_id and account_name, ordered by
+      account_id ascending.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE segment = 'enterprise'
+      ORDER BY account_id ASC
+    expected_columns: [account_id, account_name]
+    tags: [easy, filter, accounts]
+
+  - id: easy_us_accounts_count
+    question: >
+      How many accounts have country equal to 'US'? Return a single column named
+      us_accounts.
+    gold_sql: |
+      SELECT COUNT(*) AS us_accounts
+      FROM accounts
+      WHERE country = 'US'
+    expected_columns: [us_accounts]
+    tags: [easy, filter, accounts]
+
+  - id: easy_accounts_by_segment
+    question: >
+      Return each account segment and the number of accounts in it as columns
+      segment and account_count. Order by account_count descending, then segment
+      ascending.
+    gold_sql: |
+      SELECT segment, COUNT(*) AS account_count
+      FROM accounts
+      GROUP BY segment
+      ORDER BY account_count DESC, segment ASC
+    expected_columns: [segment, account_count]
+    tags: [easy, group_by, accounts]
+
+  - id: easy_accounts_by_country
+    question: >
+      Return each country and its account count as columns country and
+      account_count. Order by country ascending.
+    gold_sql: |
+      SELECT country, COUNT(*) AS account_count
+      FROM accounts
+      GROUP BY country
+      ORDER BY country ASC
+    expected_columns: [country, account_count]
+    tags: [easy, group_by, accounts]
+
+  - id: easy_distinct_industries
+    question: >
+      How many distinct values appear in the industry column of the accounts
+      table? Return a single column named distinct_industries.
+    gold_sql: |
+      SELECT COUNT(DISTINCT industry) AS distinct_industries
+      FROM accounts
+    expected_columns: [distinct_industries]
+    tags: [easy, aggregation, accounts]
+
+  - id: easy_active_plans
+    question: >
+      List plan_id and plan_name for all plans whose is_active equals 1. Return
+      columns plan_id and plan_name, ordered by plan_id ascending.
+    gold_sql: |
+      SELECT plan_id, plan_name
+      FROM plans
+      WHERE is_active = 1
+      ORDER BY plan_id ASC
+    expected_columns: [plan_id, plan_name]
+    tags: [easy, filter, plans]
+
+  - id: easy_free_plans
+    question: >
+      List plan_id and plan_name for plans whose monthly_price_cents equals 0.
+      Return columns plan_id and plan_name, ordered by plan_id ascending.
+    gold_sql: |
+      SELECT plan_id, plan_name
+      FROM plans
+      WHERE monthly_price_cents = 0
+      ORDER BY plan_id ASC
+    expected_columns: [plan_id, plan_name]
+    tags: [easy, filter, plans, edge_case]
+
+  - id: easy_admin_users_count
+    question: >
+      How many users have role equal to 'admin'? Return a single column named
+      admin_users.
+    gold_sql: |
+      SELECT COUNT(*) AS admin_users
+      FROM users
+      WHERE role = 'admin'
+    expected_columns: [admin_users]
+    tags: [easy, filter, users]
+
+  - id: easy_users_never_logged_in
+    question: >
+      How many users have a null last_login_at? Return a single column named
+      never_logged_in.
+    gold_sql: |
+      SELECT COUNT(*) AS never_logged_in
+      FROM users
+      WHERE last_login_at IS NULL
+    expected_columns: [never_logged_in]
+    tags: [easy, filter, null_handling, users]
+
+  - id: easy_users_by_role
+    question: >
+      Return each user role and its user count as columns role and user_count.
+      Order by user_count descending, then role ascending.
+    gold_sql: |
+      SELECT role, COUNT(*) AS user_count
+      FROM users
+      GROUP BY role
+      ORDER BY user_count DESC, role ASC
+    expected_columns: [role, user_count]
+    tags: [easy, group_by, users]
+
+  - id: easy_paid_invoices_count
+    question: >
+      How many invoices have status equal to 'paid'? Return a single column
+      named paid_invoices.
+    gold_sql: |
+      SELECT COUNT(*) AS paid_invoices
+      FROM invoices
+      WHERE status = 'paid'
+    expected_columns: [paid_invoices]
+    tags: [easy, filter, invoices]
+
+  - id: easy_zero_amount_invoices
+    question: >
+      How many invoices have amount_cents equal to 0? Return a single column
+      named zero_amount_invoices.
+    gold_sql: |
+      SELECT COUNT(*) AS zero_amount_invoices
+      FROM invoices
+      WHERE amount_cents = 0
+    expected_columns: [zero_amount_invoices]
+    tags: [easy, filter, invoices, edge_case]
+
+  - id: easy_invoices_by_status
+    question: >
+      Return each invoice status and its count as columns status and
+      invoice_count. Order by invoice_count descending, then status ascending.
+    gold_sql: |
+      SELECT status, COUNT(*) AS invoice_count
+      FROM invoices
+      GROUP BY status
+      ORDER BY invoice_count DESC, status ASC
+    expected_columns: [status, invoice_count]
+    tags: [easy, group_by, invoices]
+
+  - id: easy_total_paid_amount
+    question: >
+      What is the total amount_cents across all invoices whose status equals
+      'paid'? Return a single column named total_paid_cents.
+    gold_sql: |
+      SELECT SUM(amount_cents) AS total_paid_cents
+      FROM invoices
+      WHERE status = 'paid'
+    expected_columns: [total_paid_cents]
+    tags: [easy, aggregation, invoices]
+
+  - id: easy_open_invoices
+    question: >
+      List invoice_id and amount_cents for invoices whose status equals 'open'.
+      Return columns invoice_id and amount_cents, ordered by invoice_id
+      ascending, limited to the first 50 rows.
+    gold_sql: |
+      SELECT invoice_id, amount_cents
+      FROM invoices
+      WHERE status = 'open'
+      ORDER BY invoice_id ASC
+      LIMIT 50
+    expected_columns: [invoice_id, amount_cents]
+    tags: [easy, filter, invoices]
+
+  - id: easy_active_subscriptions_count
+    question: >
+      How many subscriptions have status equal to 'active'? Return a single
+      column named active_subscriptions.
+    gold_sql: |
+      SELECT COUNT(*) AS active_subscriptions
+      FROM subscriptions
+      WHERE status = 'active'
+    expected_columns: [active_subscriptions]
+    tags: [easy, filter, subscriptions]
+
+  - id: easy_subscriptions_by_status
+    question: >
+      Return each subscription status and its count as columns status and
+      subscription_count. Order by status ascending.
+    gold_sql: |
+      SELECT status, COUNT(*) AS subscription_count
+      FROM subscriptions
+      GROUP BY status
+      ORDER BY status ASC
+    expected_columns: [status, subscription_count]
+    tags: [easy, group_by, subscriptions]
+
+  - id: easy_avg_seats
+    question: >
+      What is the average seats value across all rows in the subscriptions
+      table? Return a single column named avg_seats.
+    gold_sql: |
+      SELECT AVG(seats) AS avg_seats
+      FROM subscriptions
+    expected_columns: [avg_seats]
+    tags: [easy, aggregation, subscriptions]
+
+  - id: easy_max_mrr
+    question: >
+      What is the maximum mrr_cents value across all rows in the subscriptions
+      table? Return a single column named max_mrr_cents.
+    gold_sql: |
+      SELECT MAX(mrr_cents) AS max_mrr_cents
+      FROM subscriptions
+    expected_columns: [max_mrr_cents]
+    tags: [easy, aggregation, subscriptions]
+
+  - id: easy_open_tickets
+    question: >
+      How many support tickets have a null closed_at? Return a single column
+      named open_tickets.
+    gold_sql: |
+      SELECT COUNT(*) AS open_tickets
+      FROM support_tickets
+      WHERE closed_at IS NULL
+    expected_columns: [open_tickets]
+    tags: [easy, filter, null_handling, support]
+
+  - id: easy_tickets_by_priority
+    question: >
+      Return each support-ticket priority and its count as columns priority and
+      ticket_count. Order by ticket_count descending, then priority ascending.
+    gold_sql: |
+      SELECT priority, COUNT(*) AS ticket_count
+      FROM support_tickets
+      GROUP BY priority
+      ORDER BY ticket_count DESC, priority ASC
+    expected_columns: [priority, ticket_count]
+    tags: [easy, group_by, support]
+
+  - id: easy_urgent_tickets
+    question: >
+      List ticket_id and category for support tickets whose priority equals
+      'urgent'. Return columns ticket_id and category, ordered by ticket_id
+      ascending, limited to the first 50 rows.
+    gold_sql: |
+      SELECT ticket_id, category
+      FROM support_tickets
+      WHERE priority = 'urgent'
+      ORDER BY ticket_id ASC
+      LIMIT 50
+    expected_columns: [ticket_id, category]
+    tags: [easy, filter, support]
+
+  - id: easy_usage_by_type
+    question: >
+      Return each usage event_type and the total of its event_count as columns
+      event_type and total_events. Order by total_events descending, then
+      event_type ascending.
+    gold_sql: |
+      SELECT event_type, SUM(event_count) AS total_events
+      FROM usage_events
+      GROUP BY event_type
+      ORDER BY total_events DESC, event_type ASC
+    expected_columns: [event_type, total_events]
+    tags: [easy, group_by, usage]
+
+  # ---------------------------------------------------------------------------
+  # MEDIUM — joins, group-by, and HAVING
+  # ---------------------------------------------------------------------------
+  - id: med_mrr_by_plan
+    question: >
+      Join subscriptions to plans and return each plan_name with the total
+      mrr_cents of its subscriptions, as columns plan_name and total_mrr_cents.
+      Order by total_mrr_cents descending, then plan_name ascending.
+    gold_sql: |
+      SELECT p.plan_name, SUM(s.mrr_cents) AS total_mrr_cents
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      GROUP BY p.plan_name
+      ORDER BY total_mrr_cents DESC, p.plan_name ASC
+    expected_columns: [plan_name, total_mrr_cents]
+    tags: [medium, join, group_by, subscriptions]
+
+  - id: med_active_mrr_by_plan
+    question: >
+      Considering only subscriptions whose status equals 'active', join to plans
+      and return each plan_name with the total mrr_cents, as columns plan_name
+      and active_mrr_cents. Order by active_mrr_cents descending, then plan_name
+      ascending.
+    gold_sql: |
+      SELECT p.plan_name, SUM(s.mrr_cents) AS active_mrr_cents
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      WHERE s.status = 'active'
+      GROUP BY p.plan_name
+      ORDER BY active_mrr_cents DESC, p.plan_name ASC
+    expected_columns: [plan_name, active_mrr_cents]
+    tags: [medium, join, group_by, filter, subscriptions]
+
+  - id: med_subs_count_by_segment
+    question: >
+      Join subscriptions to accounts and return each account segment with the
+      number of subscriptions, as columns segment and subscription_count. Order
+      by subscription_count descending, then segment ascending.
+    gold_sql: |
+      SELECT a.segment, COUNT(*) AS subscription_count
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      GROUP BY a.segment
+      ORDER BY subscription_count DESC, a.segment ASC
+    expected_columns: [segment, subscription_count]
+    tags: [medium, join, group_by, subscriptions]
+
+  - id: med_invoiced_by_segment
+    question: >
+      Join invoices to accounts and return each account segment with the total
+      of invoice amount_cents, as columns segment and total_amount_cents. Order
+      by total_amount_cents descending, then segment ascending.
+    gold_sql: |
+      SELECT a.segment, SUM(i.amount_cents) AS total_amount_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      GROUP BY a.segment
+      ORDER BY total_amount_cents DESC, a.segment ASC
+    expected_columns: [segment, total_amount_cents]
+    tags: [medium, join, group_by, invoices]
+
+  - id: med_paid_by_country
+    question: >
+      Considering only invoices whose status equals 'paid', join to accounts and
+      return each country with the total invoice amount_cents, as columns
+      country and paid_amount_cents. Order by paid_amount_cents descending, then
+      country ascending.
+    gold_sql: |
+      SELECT a.country, SUM(i.amount_cents) AS paid_amount_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      WHERE i.status = 'paid'
+      GROUP BY a.country
+      ORDER BY paid_amount_cents DESC, a.country ASC
+    expected_columns: [country, paid_amount_cents]
+    tags: [medium, join, group_by, filter, invoices]
+
+  - id: med_top_accounts_by_paid
+    question: >
+      Join invoices whose status equals 'paid' to accounts, group by account,
+      and return account_name with the total paid amount_cents, as columns
+      account_name and total_paid_cents. Order by total_paid_cents descending,
+      then account_name ascending, limited to the top 10 rows.
+    gold_sql: |
+      SELECT a.account_name, SUM(i.amount_cents) AS total_paid_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      WHERE i.status = 'paid'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY total_paid_cents DESC, a.account_name ASC
+      LIMIT 10
+    expected_columns: [account_name, total_paid_cents]
+    tags: [medium, join, group_by, ranking, invoices]
+
+  - id: med_tickets_by_account_having
+    question: >
+      Join support tickets to accounts, group by account, and return
+      account_name with its ticket count as columns account_name and
+      ticket_count, keeping only accounts having more than 5 tickets. Order by
+      ticket_count descending, then account_name ascending.
+    gold_sql: |
+      SELECT a.account_name, COUNT(*) AS ticket_count
+      FROM support_tickets t
+      JOIN accounts a ON a.account_id = t.account_id
+      GROUP BY a.account_id, a.account_name
+      HAVING COUNT(*) > 5
+      ORDER BY ticket_count DESC, a.account_name ASC
+    expected_columns: [account_name, ticket_count]
+    tags: [medium, join, group_by, having, support]
+
+  - id: med_avg_satisfaction_by_category
+    question: >
+      For support tickets with a non-null satisfaction_score, return each
+      category with the average satisfaction_score, as columns category and
+      avg_satisfaction. Order by avg_satisfaction descending, then category
+      ascending.
+    gold_sql: |
+      SELECT category, AVG(satisfaction_score) AS avg_satisfaction
+      FROM support_tickets
+      WHERE satisfaction_score IS NOT NULL
+      GROUP BY category
+      ORDER BY avg_satisfaction DESC, category ASC
+    expected_columns: [category, avg_satisfaction]
+    tags: [medium, group_by, null_handling, support]
+
+  - id: med_usage_by_segment
+    question: >
+      Join usage_events to accounts and return each account segment with the
+      total of event_count, as columns segment and total_events. Order by
+      total_events descending, then segment ascending.
+    gold_sql: |
+      SELECT a.segment, SUM(e.event_count) AS total_events
+      FROM usage_events e
+      JOIN accounts a ON a.account_id = e.account_id
+      GROUP BY a.segment
+      ORDER BY total_events DESC, a.segment ASC
+    expected_columns: [segment, total_events]
+    tags: [medium, join, group_by, usage]
+
+  - id: med_users_per_account_top
+    question: >
+      Join users to accounts, group by account, and return account_name with its
+      user count as columns account_name and user_count. Order by user_count
+      descending, then account_name ascending, limited to the top 10 rows.
+    gold_sql: |
+      SELECT a.account_name, COUNT(*) AS user_count
+      FROM users u
+      JOIN accounts a ON a.account_id = u.account_id
+      GROUP BY a.account_id, a.account_name
+      ORDER BY user_count DESC, a.account_name ASC
+      LIMIT 10
+    expected_columns: [account_name, user_count]
+    tags: [medium, join, group_by, ranking, users]
+
+  - id: med_payments_by_country
+    question: >
+      Join payments to accounts and return each country with the total payment
+      amount_cents, as columns country and total_paid_cents. Order by
+      total_paid_cents descending, then country ascending.
+    gold_sql: |
+      SELECT a.country, SUM(p.amount_cents) AS total_paid_cents
+      FROM payments p
+      JOIN accounts a ON a.account_id = p.account_id
+      GROUP BY a.country
+      ORDER BY total_paid_cents DESC, a.country ASC
+    expected_columns: [country, total_paid_cents]
+    tags: [medium, join, group_by, payments]
+
+  - id: med_invoices_by_month
+    question: >
+      Return the invoice month, formatted as YYYY-MM from issued_date, together
+      with the total invoice amount_cents, as columns month and
+      total_amount_cents. Group by month and order by month ascending.
+    gold_sql: |
+      SELECT strftime('%Y-%m', issued_date) AS month,
+             SUM(amount_cents) AS total_amount_cents
+      FROM invoices
+      GROUP BY month
+      ORDER BY month ASC
+    expected_columns: [month, total_amount_cents]
+    tags: [medium, group_by, date_bucket, invoices]
+
+  - id: med_accounts_by_industry_segment
+    question: >
+      Return industry, segment, and the account count as columns industry,
+      segment, and account_count, grouped by industry and segment. Order by
+      account_count descending, then industry ascending, then segment ascending,
+      limited to the top 15 rows.
+    gold_sql: |
+      SELECT industry, segment, COUNT(*) AS account_count
+      FROM accounts
+      GROUP BY industry, segment
+      ORDER BY account_count DESC, industry ASC, segment ASC
+      LIMIT 15
+    expected_columns: [industry, segment, account_count]
+    tags: [medium, group_by, accounts]
+
+  - id: med_active_subs_by_plan_having
+    question: >
+      For subscriptions whose status equals 'active', join to plans, group by
+      plan, and return plan_name with the count of active subscriptions as
+      columns plan_name and active_count, keeping only plans having more than 20
+      active subscriptions. Order by active_count descending, then plan_name
+      ascending.
+    gold_sql: |
+      SELECT p.plan_name, COUNT(*) AS active_count
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      WHERE s.status = 'active'
+      GROUP BY p.plan_name
+      HAVING COUNT(*) > 20
+      ORDER BY active_count DESC, p.plan_name ASC
+    expected_columns: [plan_name, active_count]
+    tags: [medium, join, group_by, having, subscriptions]
+
+  - id: med_avg_invoice_by_status
+    question: >
+      Return each invoice status with the average amount_cents, as columns
+      status and avg_amount_cents. Group by status and order by avg_amount_cents
+      descending, then status ascending.
+    gold_sql: |
+      SELECT status, AVG(amount_cents) AS avg_amount_cents
+      FROM invoices
+      GROUP BY status
+      ORDER BY avg_amount_cents DESC, status ASC
+    expected_columns: [status, avg_amount_cents]
+    tags: [medium, group_by, invoices]
+
+  - id: med_high_value_accounts_having
+    question: >
+      Join subscriptions to accounts, group by account, and return account_name
+      with the total mrr_cents as columns account_name and total_mrr_cents,
+      keeping only accounts whose total mrr_cents is greater than 500000. Order
+      by total_mrr_cents descending, then account_name ascending, limited to the
+      top 20 rows.
+    gold_sql: |
+      SELECT a.account_name, SUM(s.mrr_cents) AS total_mrr_cents
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      GROUP BY a.account_id, a.account_name
+      HAVING SUM(s.mrr_cents) > 500000
+      ORDER BY total_mrr_cents DESC, a.account_name ASC
+      LIMIT 20
+    expected_columns: [account_name, total_mrr_cents]
+    tags: [medium, join, group_by, having, subscriptions]
+
+  - id: med_closed_tickets_by_segment
+    question: >
+      Join support tickets whose closed_at is not null to accounts and return
+      each segment with the count of closed tickets, as columns segment and
+      closed_ticket_count. Order by closed_ticket_count descending, then segment
+      ascending.
+    gold_sql: |
+      SELECT a.segment, COUNT(*) AS closed_ticket_count
+      FROM support_tickets t
+      JOIN accounts a ON a.account_id = t.account_id
+      WHERE t.closed_at IS NOT NULL
+      GROUP BY a.segment
+      ORDER BY closed_ticket_count DESC, a.segment ASC
+    expected_columns: [segment, closed_ticket_count]
+    tags: [medium, join, group_by, null_handling, support]
+
+  - id: med_export_events_by_account
+    question: >
+      Considering only usage_events whose event_type equals 'export', join to
+      accounts, group by account, and return account_name with the total
+      event_count as columns account_name and export_events. Order by
+      export_events descending, then account_name ascending, limited to the top
+      10 rows.
+    gold_sql: |
+      SELECT a.account_name, SUM(e.event_count) AS export_events
+      FROM usage_events e
+      JOIN accounts a ON a.account_id = e.account_id
+      WHERE e.event_type = 'export'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY export_events DESC, a.account_name ASC
+      LIMIT 10
+    expected_columns: [account_name, export_events]
+    tags: [medium, join, group_by, ranking, usage]
+
+  - id: med_distinct_plans_per_segment
+    question: >
+      Join subscriptions to accounts and plans and return each account segment
+      with the number of distinct plan_name values, as columns segment and
+      distinct_plans. Order by segment ascending.
+    gold_sql: |
+      SELECT a.segment, COUNT(DISTINCT p.plan_name) AS distinct_plans
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      JOIN plans p ON p.plan_id = s.plan_id
+      GROUP BY a.segment
+      ORDER BY a.segment ASC
+    expected_columns: [segment, distinct_plans]
+    tags: [medium, join, group_by, subscriptions]
+
+  - id: med_uncollectible_by_account
+    question: >
+      Join invoices whose status equals 'uncollectible' to accounts, group by
+      account, and return account_name with the total amount_cents as columns
+      account_name and uncollectible_cents. Order by uncollectible_cents
+      descending, then account_name ascending, limited to the top 10 rows.
+    gold_sql: |
+      SELECT a.account_name, SUM(i.amount_cents) AS uncollectible_cents
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      WHERE i.status = 'uncollectible'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY uncollectible_cents DESC, a.account_name ASC
+      LIMIT 10
+    expected_columns: [account_name, uncollectible_cents]
+    tags: [medium, join, group_by, ranking, invoices]
+
+  - id: med_logins_by_month
+    question: >
+      Considering only usage_events whose event_type equals 'login', return the
+      month formatted as YYYY-MM from event_date together with the total
+      event_count, as columns month and login_events. Group by month and order
+      by month ascending.
+    gold_sql: |
+      SELECT strftime('%Y-%m', event_date) AS month,
+             SUM(event_count) AS login_events
+      FROM usage_events
+      WHERE event_type = 'login'
+      GROUP BY month
+      ORDER BY month ASC
+    expected_columns: [month, login_events]
+    tags: [medium, group_by, date_bucket, usage]
+
+  - id: med_paid_invoice_count_by_plan
+    question: >
+      Join invoices whose status equals 'paid' to subscriptions and plans, group
+      by plan, and return plan_name with the count of paid invoices as columns
+      plan_name and paid_invoice_count. Order by paid_invoice_count descending,
+      then plan_name ascending.
+    gold_sql: |
+      SELECT p.plan_name, COUNT(*) AS paid_invoice_count
+      FROM invoices i
+      JOIN subscriptions s ON s.subscription_id = i.subscription_id
+      JOIN plans p ON p.plan_id = s.plan_id
+      WHERE i.status = 'paid'
+      GROUP BY p.plan_name
+      ORDER BY paid_invoice_count DESC, p.plan_name ASC
+    expected_columns: [plan_name, paid_invoice_count]
+    tags: [medium, join, group_by, invoices]
+
+  - id: med_seats_by_plan
+    question: >
+      Join subscriptions to plans, group by plan, and return plan_name with the
+      total seats as columns plan_name and total_seats. Order by total_seats
+      descending, then plan_name ascending.
+    gold_sql: |
+      SELECT p.plan_name, SUM(s.seats) AS total_seats
+      FROM subscriptions s
+      JOIN plans p ON p.plan_id = s.plan_id
+      GROUP BY p.plan_name
+      ORDER BY total_seats DESC, p.plan_name ASC
+    expected_columns: [plan_name, total_seats]
+    tags: [medium, join, group_by, subscriptions]
+
+  # ---------------------------------------------------------------------------
+  # HARD — subqueries, multi-join aggregations, conditional aggregation,
+  # date arithmetic
+  # ---------------------------------------------------------------------------
+  - id: hard_accounts_no_payments
+    question: >
+      List account_id and account_name for accounts that appear at least once in
+      the invoices table but never appear in the payments table. Return columns
+      account_id and account_name, ordered by account_id ascending, limited to
+      the first 50 rows.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE account_id IN (SELECT account_id FROM invoices)
+        AND account_id NOT IN (SELECT account_id FROM payments)
+      ORDER BY account_id ASC
+      LIMIT 50
+    expected_columns: [account_id, account_name]
+    tags: [hard, subquery, anti_join, invoices, payments]
+
+  - id: hard_above_avg_mrr
+    question: >
+      Group subscriptions by account_id and compute each account's total
+      mrr_cents. Return account_id and that total as columns account_id and
+      total_mrr_cents, keeping only accounts whose total exceeds the average
+      per-account total mrr_cents across all accounts. Order by total_mrr_cents
+      descending, then account_id ascending, limited to the top 25 rows.
+    gold_sql: |
+      SELECT account_id, SUM(mrr_cents) AS total_mrr_cents
+      FROM subscriptions
+      GROUP BY account_id
+      HAVING SUM(mrr_cents) > (
+        SELECT AVG(per_account_total)
+        FROM (
+          SELECT SUM(mrr_cents) AS per_account_total
+          FROM subscriptions
+          GROUP BY account_id
+        )
+      )
+      ORDER BY total_mrr_cents DESC, account_id ASC
+      LIMIT 25
+    expected_columns: [account_id, total_mrr_cents]
+    tags: [hard, subquery, group_by, having, subscriptions]
+
+  - id: hard_monthly_paid_revenue
+    question: >
+      Considering only invoices whose status equals 'paid', return the month
+      formatted as YYYY-MM from issued_date together with the total amount_cents,
+      as columns month and paid_cents, keeping only months whose paid total
+      exceeds 1000000. Order by month ascending.
+    gold_sql: |
+      SELECT strftime('%Y-%m', issued_date) AS month,
+             SUM(amount_cents) AS paid_cents
+      FROM invoices
+      WHERE status = 'paid'
+      GROUP BY month
+      HAVING SUM(amount_cents) > 1000000
+      ORDER BY month ASC
+    expected_columns: [month, paid_cents]
+    tags: [hard, group_by, having, date_bucket, invoices]
+
+  - id: hard_accounts_multiple_plans
+    question: >
+      Group subscriptions by account_id and return account_id with the number of
+      distinct plan_id values, as columns account_id and plan_count, keeping only
+      accounts subscribed to more than one distinct plan. Order by plan_count
+      descending, then account_id ascending, limited to the top 25 rows.
+    gold_sql: |
+      SELECT account_id, COUNT(DISTINCT plan_id) AS plan_count
+      FROM subscriptions
+      GROUP BY account_id
+      HAVING COUNT(DISTINCT plan_id) > 1
+      ORDER BY plan_count DESC, account_id ASC
+      LIMIT 25
+    expected_columns: [account_id, plan_count]
+    tags: [hard, group_by, having, subscriptions]
+
+  - id: hard_churn_by_segment
+    question: >
+      Return each account segment with the total number of accounts and the
+      number of churned accounts (those whose churned_date is not null), as
+      columns segment, total_accounts, and churned_accounts. Group by segment
+      and order by segment ascending.
+    gold_sql: |
+      SELECT segment,
+             COUNT(*) AS total_accounts,
+             SUM(CASE WHEN churned_date IS NOT NULL THEN 1 ELSE 0 END) AS churned_accounts
+      FROM accounts
+      GROUP BY segment
+      ORDER BY segment ASC
+    expected_columns: [segment, total_accounts, churned_accounts]
+    tags: [hard, conditional_aggregation, group_by, accounts]
+
+  - id: hard_avg_invoices_per_account_by_segment
+    question: >
+      For accounts that have at least one invoice, first count invoices per
+      account, then return each account segment with the average of those
+      per-account invoice counts, as columns segment and
+      avg_invoices_per_account. Order by segment ascending.
+    gold_sql: |
+      SELECT segment, AVG(invoice_count) AS avg_invoices_per_account
+      FROM (
+        SELECT a.account_id, a.segment, COUNT(i.invoice_id) AS invoice_count
+        FROM accounts a
+        JOIN invoices i ON i.account_id = a.account_id
+        GROUP BY a.account_id, a.segment
+      )
+      GROUP BY segment
+      ORDER BY segment ASC
+    expected_columns: [segment, avg_invoices_per_account]
+    tags: [hard, subquery, group_by, invoices]
+
+  - id: hard_accounts_with_urgent_tickets
+    question: >
+      List account_id and account_name for accounts that have at least one
+      support ticket whose priority equals 'urgent'. Return columns account_id
+      and account_name, ordered by account_id ascending, limited to the first 50
+      rows.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE account_id IN (
+        SELECT account_id FROM support_tickets WHERE priority = 'urgent'
+      )
+      ORDER BY account_id ASC
+      LIMIT 50
+    expected_columns: [account_id, account_name]
+    tags: [hard, subquery, semi_join, support]
+
+  - id: hard_top_api_call_accounts
+    question: >
+      Considering only usage_events whose event_type equals 'api_call', join to
+      accounts, group by account, and return account_name with the total
+      event_count as columns account_name and api_calls, for the 5 accounts with
+      the highest api_call totals. Order by api_calls descending, then
+      account_name ascending, limited to 5 rows.
+    gold_sql: |
+      SELECT a.account_name, SUM(e.event_count) AS api_calls
+      FROM usage_events e
+      JOIN accounts a ON a.account_id = e.account_id
+      WHERE e.event_type = 'api_call'
+      GROUP BY a.account_id, a.account_name
+      ORDER BY api_calls DESC, a.account_name ASC
+      LIMIT 5
+    expected_columns: [account_name, api_calls]
+    tags: [hard, join, group_by, ranking, usage]
+
+  - id: hard_collection_rate_by_month
+    question: >
+      For each invoice month, formatted as YYYY-MM from issued_date, return the
+      total of all invoice amount_cents and the total amount_cents of only the
+      invoices whose status equals 'paid', as columns month, invoiced_cents, and
+      paid_cents. Group by month and order by month ascending.
+    gold_sql: |
+      SELECT strftime('%Y-%m', issued_date) AS month,
+             SUM(amount_cents) AS invoiced_cents,
+             SUM(CASE WHEN status = 'paid' THEN amount_cents ELSE 0 END) AS paid_cents
+      FROM invoices
+      GROUP BY month
+      ORDER BY month ASC
+    expected_columns: [month, invoiced_cents, paid_cents]
+    tags: [hard, conditional_aggregation, date_bucket, invoices]
+
+  - id: hard_accounts_no_tickets
+    question: >
+      List account_id and account_name for accounts whose is_active equals 1 and
+      that never appear in the support_tickets table. Return columns account_id
+      and account_name, ordered by account_id ascending, limited to the first 50
+      rows.
+    gold_sql: |
+      SELECT account_id, account_name
+      FROM accounts
+      WHERE is_active = 1
+        AND account_id NOT IN (SELECT account_id FROM support_tickets)
+      ORDER BY account_id ASC
+      LIMIT 50
+    expected_columns: [account_id, account_name]
+    tags: [hard, subquery, anti_join, support]
+
+  - id: hard_second_highest_mrr
+    question: >
+      Group subscriptions by account_id and compute each account's total
+      mrr_cents. Return the account_id and total for the account ranked second
+      highest by total mrr_cents (ties broken by account_id ascending), as
+      columns account_id and total_mrr_cents.
+    gold_sql: |
+      SELECT account_id, SUM(mrr_cents) AS total_mrr_cents
+      FROM subscriptions
+      GROUP BY account_id
+      ORDER BY total_mrr_cents DESC, account_id ASC
+      LIMIT 1 OFFSET 1
+    expected_columns: [account_id, total_mrr_cents]
+    tags: [hard, group_by, ranking, offset, subscriptions]
+
+  - id: hard_paid_ratio_by_segment
+    question: >
+      Join invoices to accounts and return each account segment with the count of
+      invoices whose status equals 'paid' and the count of all invoices, as
+      columns segment, paid_invoices, and total_invoices. Group by segment and
+      order by segment ascending.
+    gold_sql: |
+      SELECT a.segment,
+             SUM(CASE WHEN i.status = 'paid' THEN 1 ELSE 0 END) AS paid_invoices,
+             COUNT(*) AS total_invoices
+      FROM invoices i
+      JOIN accounts a ON a.account_id = i.account_id
+      GROUP BY a.segment
+      ORDER BY a.segment ASC
+    expected_columns: [segment, paid_invoices, total_invoices]
+    tags: [hard, join, conditional_aggregation, group_by, invoices]
+
+  - id: hard_avg_days_to_pay
+    question: >
+      Join invoices to payments on invoice_id and return the average number of
+      days between issued_date and paid_date as a single column named
+      avg_days_to_pay, computed as the average of julianday(paid_date) minus
+      julianday(issued_date).
+    gold_sql: |
+      SELECT AVG(julianday(p.paid_date) - julianday(i.issued_date)) AS avg_days_to_pay
+      FROM invoices i
+      JOIN payments p ON p.invoice_id = i.invoice_id
+    expected_columns: [avg_days_to_pay]
+    tags: [hard, join, date_arithmetic, payments]
+
+  - id: hard_top_industry_by_mrr
+    question: >
+      Join subscriptions to accounts, group by industry, and return industry with
+      the total mrr_cents as columns industry and total_mrr_cents, for the 3
+      industries with the highest totals. Order by total_mrr_cents descending,
+      then industry ascending, limited to 3 rows.
+    gold_sql: |
+      SELECT a.industry, SUM(s.mrr_cents) AS total_mrr_cents
+      FROM subscriptions s
+      JOIN accounts a ON a.account_id = s.account_id
+      GROUP BY a.industry
+      ORDER BY total_mrr_cents DESC, a.industry ASC
+      LIMIT 3
+    expected_columns: [industry, total_mrr_cents]
+    tags: [hard, join, group_by, ranking, subscriptions]
+
+  - id: hard_accounts_all_invoices_paid
+    question: >
+      List account_id and account_name for accounts that have at least one
+      invoice and for which no invoice has a status other than 'paid'. Return
+      columns account_id and account_name, ordered by account_id ascending,
+      limited to the first 50 rows.
+    gold_sql: |
+      SELECT a.account_id, a.account_name
+      FROM accounts a
+      WHERE EXISTS (SELECT 1 FROM invoices i WHERE i.account_id = a.account_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM invoices i
+          WHERE i.account_id = a.account_id AND i.status <> 'paid'
+        )
+      ORDER BY a.account_id ASC
+      LIMIT 50
+    expected_columns: [account_id, account_name]
+    tags: [hard, subquery, exists, invoices]
+
+  - id: hard_repeat_ticket_accounts_avg_satisfaction
+    question: >
+      Join support tickets that have a non-null satisfaction_score to accounts,
+      group by account, and return account_name with the average
+      satisfaction_score as columns account_name and avg_satisfaction, keeping
+      only accounts having at least 4 rated tickets. Order by avg_satisfaction
+      ascending, then account_name ascending, limited to the top 15 rows.
+    gold_sql: |
+      SELECT a.account_name, AVG(t.satisfaction_score) AS avg_satisfaction
+      FROM support_tickets t
+      JOIN accounts a ON a.account_id = t.account_id
+      WHERE t.satisfaction_score IS NOT NULL
+      GROUP BY a.account_id, a.account_name
+      HAVING COUNT(*) >= 4
+      ORDER BY avg_satisfaction ASC, a.account_name ASC
+      LIMIT 15
+    expected_columns: [account_name, avg_satisfaction]
+    tags: [hard, join, group_by, having, null_handling, support]

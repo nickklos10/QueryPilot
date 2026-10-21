@@ -22,6 +22,9 @@ SQL_JSON_SCHEMA: dict[str, Any] = {
     "strict": True,
 }
 
+# Default base URL for OpenAI-compatible local endpoints (Ollama's `/v1`).
+DEFAULT_LOCAL_BASE_URL = "http://localhost:11434/v1"
+
 
 class OpenAISQLGenerator:
     def __init__(
@@ -64,6 +67,45 @@ class OpenAISQLGenerator:
             text={"format": {"type": "json_schema", **SQL_JSON_SCHEMA}},
         )
         return _generated_from_text(question, _extract_openai_text(response))
+
+
+class OpenAICompatibleSQLGenerator(OpenAISQLGenerator):
+    """SQL generator for OpenAI-compatible local endpoints.
+
+    Targets servers that expose the OpenAI Chat Completions API over a local
+    ``base_url`` — Ollama (``http://localhost:11434/v1``), vLLM, LM Studio, and
+    llama.cpp's server. It reuses the OpenAI extra (no new dependency) and the
+    same schema-scoped prompt + JSON parsing as :class:`OpenAISQLGenerator`,
+    but talks Chat Completions (which local servers implement) instead of the
+    Responses API, and makes the API key optional — local servers ignore it,
+    yet the ``openai`` client rejects an empty string, so a harmless placeholder
+    is used when none is supplied.
+    """
+
+    def __init__(
+        self,
+        client: Any | None = None,
+        model: str = "llama3.1",
+        max_output_tokens: int = 800,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        self.client = client or _default_openai_compatible_client(base_url, api_key)
+        self.model = model
+        self.max_output_tokens = max_output_tokens
+
+    def _create(self, question: str, instructions: str, user_prompt: str) -> GeneratedSQL:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=self.max_output_tokens,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return _generated_from_text(question, _extract_chat_completion_text(response))
 
 
 class AnthropicSQLGenerator:
@@ -149,6 +191,26 @@ def _extract_openai_text(response: Any) -> str:
     return str(response)
 
 
+def _extract_chat_completion_text(response: Any) -> str:
+    choices = getattr(response, "choices", None)
+    if isinstance(choices, list) and choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for part in content:
+                text = getattr(part, "text", None)
+                if isinstance(text, str):
+                    chunks.append(text)
+                elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                    chunks.append(part["text"])
+            if chunks:
+                return "".join(chunks)
+    return str(response)
+
+
 def _extract_anthropic_text(message: Any) -> str:
     content = getattr(message, "content", None)
     if isinstance(content, list):
@@ -170,6 +232,21 @@ def _default_openai_client() -> Any:
     except ImportError as exc:
         raise ImportError("Install querypilot[openai] to use OpenAISQLGenerator.") from exc
     return OpenAI()
+
+
+def _default_openai_compatible_client(base_url: str | None, api_key: str | None) -> Any:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "Install querypilot[openai] to use OpenAICompatibleSQLGenerator."
+        ) from exc
+    return OpenAI(
+        base_url=base_url or DEFAULT_LOCAL_BASE_URL,
+        # Local servers ignore the key, but the openai client rejects an empty
+        # string, so fall back to a harmless placeholder when none is given.
+        api_key=api_key or "not-needed",
+    )
 
 
 def _default_anthropic_client() -> Any:

@@ -7,6 +7,7 @@ from querypilot import QueryPilot
 from querypilot.evals.cost import (
     AnthropicCostTracker,
     CostTracker,
+    LocalCostTracker,
     NullCostTracker,
     OpenAICostTracker,
 )
@@ -16,13 +17,16 @@ from querypilot.evals.suite import BenchmarkCase, BenchmarkSuite
 from querypilot.generation.sql_generator import DemoSQLGenerator, SQLGenerator
 
 
-GENERATOR_NAMES = ("demo", "openai", "anthropic")
+GENERATOR_NAMES = ("demo", "openai", "anthropic", "openai-compatible")
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+DEFAULT_LOCAL_MODEL = "llama3.1"
 
 
-def build_generator(name: str, *, model: str | None = None) -> SQLGenerator:
+def build_generator(
+    name: str, *, model: str | None = None, base_url: str | None = None
+) -> SQLGenerator:
     normalized = name.lower()
     if normalized == "demo":
         return DemoSQLGenerator()
@@ -34,6 +38,13 @@ def build_generator(name: str, *, model: str | None = None) -> SQLGenerator:
         from querypilot.generation.llm import AnthropicSQLGenerator
 
         return AnthropicSQLGenerator(model=model or DEFAULT_ANTHROPIC_MODEL)
+    if normalized == "openai-compatible":
+        from querypilot.generation.llm import OpenAICompatibleSQLGenerator
+
+        return OpenAICompatibleSQLGenerator(
+            model=model or DEFAULT_LOCAL_MODEL,
+            base_url=base_url,
+        )
     raise ValueError(
         f"Unknown generator {name!r}. Supported: {', '.join(GENERATOR_NAMES)}."
     )
@@ -47,6 +58,8 @@ def build_cost_tracker_factory(name: str) -> Callable[[], CostTracker]:
         return OpenAICostTracker
     if normalized == "anthropic":
         return AnthropicCostTracker
+    if normalized == "openai-compatible":
+        return LocalCostTracker
     raise ValueError(
         f"Unknown generator {name!r}. Supported: {', '.join(GENERATOR_NAMES)}."
     )

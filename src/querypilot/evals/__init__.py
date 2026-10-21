@@ -8,9 +8,17 @@ from querypilot.evals.check import (
     write_outcome,
 )
 from querypilot.evals.compare import RowsetMatch, ValueMismatch, compare_rows, has_order_by
+from querypilot.evals.datasets import (
+    DatasetFormat,
+    DatasetImportError,
+    ImportResult,
+    detect_format,
+    import_dataset,
+)
 from querypilot.evals.cost import (
     AnthropicCostTracker,
     CostTracker,
+    LocalCostTracker,
     NullCostTracker,
     OpenAICostTracker,
     TokenUsage,
@@ -20,6 +28,14 @@ from querypilot.evals.factory import (
     build_generator,
     build_qp_factory,
     load_suite_or_dir,
+)
+from querypilot.evals.leaderboard import (
+    Leaderboard,
+    LeaderboardEntry,
+    LeaderboardError,
+    build_leaderboard,
+    default_label,
+    load_leaderboard,
 )
 from querypilot.evals.loader import SuiteLoadError, load_suite, load_suite_dir, write_suite
 from querypilot.evals.replay import replay_from_jsonl, replay_from_sink
@@ -48,7 +64,14 @@ __all__ = [
     "CheckSummary",
     "ComparisonConfig",
     "CostTracker",
+    "DatasetFormat",
+    "DatasetImportError",
     "FailureCategory",
+    "ImportResult",
+    "Leaderboard",
+    "LeaderboardEntry",
+    "LeaderboardError",
+    "LocalCostTracker",
     "NullCostTracker",
     "OpenAICostTracker",
     "RowsetMatch",
@@ -61,11 +84,16 @@ __all__ = [
     "ValueMismatch",
     "build_cost_tracker_factory",
     "build_generator",
+    "build_leaderboard",
     "build_qp_factory",
     "check_report",
     "compare_rows",
+    "default_label",
+    "detect_format",
     "format_outcome",
     "has_order_by",
+    "import_dataset",
+    "load_leaderboard",
     "load_report",
     "load_suite",
     "load_suite_dir",

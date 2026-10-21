@@ -6,6 +6,98 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `ComparisonConfig.ignore_column_names` (suite-YAML-settable) — compare
+  candidate results to gold by **values only**, ignoring the column aliases the
+  model chose (Spider/BIRD "execution accuracy"). Column count must still match;
+  a candidate passes when some permutation of its columns reproduces gold's
+  value rows under the existing normalizations (row-order-insensitivity, float
+  tolerance, datetime/case/NaN handling). The permutation is found with
+  backtracking pruned by column value-multiset compatibility — not brute-force
+  factorial — and wide result sets (>16 columns) error clearly rather than run
+  unbounded. Fixes false-negatives where identical values failed on an alias
+  mismatch (e.g. `COUNT(*) AS customer_count` vs gold `COUNT(*) AS count`); the
+  accepted trade is that two columns with identical value multisets may swap and
+  still match. The Spider/BIRD importer (`querypilot eval import`) now emits
+  suites with `ignore_column_names: true` by default (matching upstream
+  scoring), with `--no-ignore-column-names` to write name-aware suites instead.
+- **SaaSPulse native benchmark** (`benchmarks/`) — a contamination-proof,
+  execution-truth text-to-SQL suite on a novel, never-published B2B-SaaS schema
+  (8 tables: plans, accounts, users, subscriptions, invoices, payments,
+  support_tickets, usage_events; realistic FKs, NULLs, and edge rows). 102 cases:
+  65 correctness cases across tagged `easy`/`medium`/`hard` tiers (each question
+  fully specifies output columns, filters, ordering, and limits, with boring
+  canonical gold SQL) and 37 safety cases (`should_pass: false`) covering DDL/DML,
+  multi-statement, comment-smuggled injection, CTE-hidden mutations, PRAGMA/ATTACH,
+  blocked functions, Cartesian joins, and schema exfiltration. Includes a
+  deterministic, byte-stable fixture generator
+  (`benchmarks/fixtures/make_saaspulse.py`, fixed seed, no `datetime.now()`), the
+  committed `saaspulse.db` (~3.6 MB), a `validate_golds.py` pre-flight that
+  executes every gold and asserts every unsafe case is blocked, and a
+  `benchmarks/README.md` documenting regeneration, the `eval run` / `eval
+  leaderboard` matrix, and the contamination-proof rationale.
+- `querypilot eval leaderboard` — aggregate N `SuiteReport` JSONs (the same
+  suite run against different generators/models) into a ranked comparison of
+  pass rate, safety, correctness, repair rate, p50/p95 latency, cost, and
+  tokens. Ranks by pass rate (tie-broken by safety then cost), warns when
+  reports disagree on suite name or case count, and refuses to mix different
+  suites without `--force`. Renders an aligned terminal table (matching
+  `eval run`), a GitHub-flavored markdown table for blog posts, and
+  machine-readable JSON (`--output` / `--format`). New
+  `querypilot.evals.leaderboard` module.
+- Dataset importer (`querypilot eval import`) that converts locally-downloaded
+  **Spider 1.0** and **BIRD** dev sets into QueryPilot benchmark suites. It is
+  file-based only (no network, no vendored dataset data — both are CC BY-SA),
+  auto-detects Spider vs BIRD (or takes `--format`), writes **one suite YAML per
+  `db_id`** (a `BenchmarkSuite` binds a single `fixture_db`, so a many-db dataset
+  maps to a directory of per-db suites), carries BIRD `evidence` into the
+  question, supports `--limit`/`--db` filtering with stable case ids, validates
+  that each referenced SQLite fixture exists, and warns+skips cases whose gold
+  SQL fails to execute (`--strict` to error instead). New
+  `querypilot.evals.datasets` module with `import_dataset` / `detect_format` /
+  `ImportResult` exports.
+- `OpenAICompatibleSQLGenerator` for OpenAI-compatible local endpoints (Ollama,
+  vLLM, LM Studio, llama.cpp). Reuses the `[openai]` extra (no new dependency),
+  talks the Chat Completions API, defaults to Ollama's
+  `http://localhost:11434/v1`, and treats the API key as optional. Wired into
+  the eval harness as `--generator openai-compatible` with a `--base-url` flag
+  (also `$QUERYPILOT_BASE_URL`), so the benchmark matrix can include open models
+  at $0.
+- `LocalCostTracker` — captures token usage from local endpoints when reported
+  but always estimates $0, so reports show real token counts without bogus
+  dollar figures. Paired automatically with the `openai-compatible` generator.
+
+### Changed
+
+- Minimum `sqlglot` is now 25.20; earlier releases lack `exp.Alter` and
+  already failed the test suite.
+
+### Fixed
+
+- `MODEL_PRICING` in `querypilot.evals.cost` predated the 2026 model lineup, so
+  hosted models such as `gpt-5.4-nano` silently estimated **$0** cost —
+  corrupting the benchmark's cost-per-query headline. Refreshed the table
+  against the official OpenAI
+  (<https://developers.openai.com/api/docs/pricing>) and Anthropic
+  (<https://platform.claude.com/docs/en/about-claude/pricing>) pricing pages as
+  of 2026-07-11 (GPT-5.4/5.5/5.6 tiers; Claude Opus 4.8/4.7, Sonnet 5,
+  Haiku 4.5), with a source-URL + as-of-date comment block. Model ids now
+  resolve by exact match then longest-prefix family fallback, so dated
+  snapshots (e.g. `gpt-5.4-nano-2026-03-17`) inherit their family price.
+  Models still missing from the table now emit a one-time `warnings.warn`
+  naming the model and fall back to $0 (previously silent), while
+  `LocalCostTracker` and `NullCostTracker` remain warning-free $0 by design.
+- The validator resolves columns through sqlglot's scope analysis, so common
+  read-only queries are no longer rejected: `ORDER BY` / `HAVING` on select
+  aliases, CTEs (including recursive CTEs and CTE column lists), `UNION` /
+  `INTERSECT` / `EXCEPT`, derived-table qualifiers, unqualified columns inside
+  `IN (...)` subqueries, and joins nested in derived tables. CTE names are no
+  longer reported in `ValidationResult.tables`.
+- Opening a missing SQLite file raises `FileNotFoundError` instead of silently
+  creating an empty database, and `querypilot eval run` exits with
+  `Fixture database not found: <path>` before running any case.
+
 ### Security
 
 - Row filters are now applied to every reference of a filtered table, at every
@@ -27,23 +119,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `SELECT ... INTO` is rejected as a non-read-only operation.
 - SQLite databases are opened read-only (`mode=ro`), matching the Postgres
   `READ ONLY` transaction, so a validator gap cannot become a write.
-
-### Fixed
-
-- The validator resolves columns through sqlglot's scope analysis, so common
-  read-only queries are no longer rejected: `ORDER BY` / `HAVING` on select
-  aliases, CTEs (including recursive CTEs and CTE column lists), `UNION` /
-  `INTERSECT` / `EXCEPT`, derived-table qualifiers, unqualified columns inside
-  `IN (...)` subqueries, and joins nested in derived tables. CTE names are no
-  longer reported in `ValidationResult.tables`.
-- Opening a missing SQLite file raises `FileNotFoundError` instead of silently
-  creating an empty database, and `querypilot eval run` exits with
-  `Fixture database not found: <path>` before running any case.
-
-### Changed
-
-- Minimum `sqlglot` is now 25.20; earlier releases lack `exp.Alter` and
-  already failed the test suite.
 
 ## [0.1.1] - 2026-07-11
 

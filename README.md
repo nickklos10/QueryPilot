@@ -228,6 +228,49 @@ qp = QueryPilot.connect(
 )
 ```
 
+### Local / open models
+
+Any OpenAI-compatible endpoint — [Ollama](https://ollama.com), vLLM, LM Studio,
+or llama.cpp's server — works through `OpenAICompatibleSQLGenerator`. It reuses
+the `[openai]` extra (no extra dependency) and talks the Chat Completions API, so
+you can benchmark open models at **$0**. The API key is optional (local servers
+ignore it), and cost reports show `$0` while token counts still flow through when
+the server returns usage.
+
+```bash
+ollama pull llama3.1
+.venv/bin/pip install -e ".[openai]"
+```
+
+```python
+from querypilot import QueryPilot
+from querypilot.generation import OpenAICompatibleSQLGenerator
+
+qp = QueryPilot.connect(
+    "sqlite:///demo.db",
+    generator=OpenAICompatibleSQLGenerator(
+        model="llama3.1",
+        base_url="http://localhost:11434/v1",  # Ollama's default; omit to use it
+    ),
+    max_generation_attempts=2,
+)
+```
+
+From the eval harness, add open models to the benchmark matrix with
+`--generator openai-compatible`:
+
+```bash
+querypilot eval run \
+    --suite suites/smoke.yaml \
+    --generator openai-compatible \
+    --model llama3.1 \
+    --base-url http://localhost:11434/v1 \
+    --report eval-out.json
+```
+
+`--base-url` also reads `$QUERYPILOT_BASE_URL`, and defaults to Ollama's
+`http://localhost:11434/v1` when unset.
+
 The safety loop is always:
 
 ```text
