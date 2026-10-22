@@ -8,6 +8,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`querypilot trace` and `querypilot hooks`.** Observe and improve the SQL agents
+  run through MCP and connector tools that QueryPilot cannot proxy, starting with
+  Palantir Foundry's `run_sql_query_on_foundry_dataset` in Claude Code. Any other
+  query tool is mapped by name and SQL input field (`--tool NAME=FIELD[:DIALECT]`).
+  `trace import` reads Claude Code transcripts into the JSONL audit log (SQL,
+  outcome, failure class, latency, session; never result rows). `hooks install`
+  adds PostToolUse/PostToolUseFailure hooks that log calls live. With `--guard`,
+  a PreToolUse hook validates SQL against a schema cache built from the agent's
+  schema calls, denies unknown columns with "did you mean" feedback, catches
+  epoch-millisecond arithmetic on DATE columns, and enforces `--max-rows`.
+  `trace doctor` reports failure classes, retry chains, latency and stalls, and a
+  guard replay. It tags each finding as a tool, prompt or data fix, and exports
+  recovered retry chains for `eval replay`. `QueryAuditRecord` gains `tool_name`,
+  `tool_call_id` and `details`. See `docs/trace.md`.
 - **`querypilot proxy` (prototype).** A Postgres wire-protocol proxy that puts the
   validator and access policy in front of a real database, so any client (psql,
   drivers, ORMs, MCP database servers, BI tools) is protected unchanged. It

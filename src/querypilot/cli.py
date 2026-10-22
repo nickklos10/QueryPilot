@@ -134,6 +134,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     proxy_parser.add_argument("--verbose", "-v", action="store_true", help="Log every connection and statement.")
 
+    from querypilot.trace.cli import add_hooks_parser, add_trace_parser
+
+    add_trace_parser(subparsers)
+    add_hooks_parser(subparsers)
+
     eval_parser = subparsers.add_parser("eval", help="Eval-driven SQL reliability harness.")
     eval_subparsers = eval_parser.add_subparsers(dest="eval_command", required=True)
 
@@ -204,6 +209,14 @@ def main(argv: list[str] | None = None) -> int:
         from querypilot.proxy.cli import run_proxy
 
         return run_proxy(args)
+    if args.command == "trace":
+        from querypilot.trace.cli import run_trace
+
+        return run_trace(args)
+    if args.command == "hooks":
+        from querypilot.trace.cli import run_hooks
+
+        return run_hooks(args)
     if args.command == "eval":
         if args.eval_command == "run":
             return _eval_run(args)
