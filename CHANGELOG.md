@@ -17,9 +17,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   adds PostToolUse/PostToolUseFailure hooks that log calls live. With `--guard`,
   a PreToolUse hook validates SQL against a schema cache built from the agent's
   schema calls, denies unknown columns with "did you mean" feedback, catches
-  epoch-millisecond arithmetic on DATE columns, and enforces `--max-rows`.
-  `trace doctor` reports failure classes, retry chains, latency and stalls, and a
-  guard replay. It tags each finding as a tool, prompt or data fix, and exports
+  epoch-millisecond arithmetic on DATE columns, enforces `--max-rows`, and denies
+  `SELECT *` on cached datasets wider than `--max-star-columns` (default 20),
+  asking for named columns. `trace doctor` reports failure classes, retry chains,
+  latency and stalls, and a guard replay that counts failures stopped by the
+  schema check and by the size rules, plus successes those rules would send back. It tags each finding as a tool, prompt or data fix, and exports
   recovered retry chains for `eval replay`. `QueryAuditRecord` gains `tool_name`,
   `tool_call_id` and `details`. See `docs/trace.md`.
 - **`querypilot proxy` (prototype).** A Postgres wire-protocol proxy that puts the

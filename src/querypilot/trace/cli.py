@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-from querypilot.trace.hooks import SCOPES, default_audit_log
+from querypilot.trace.hooks import DEFAULT_MAX_STAR_COLUMNS, SCOPES, default_audit_log
 
 DEFAULT_TRANSCRIPTS = "~/.claude/projects"
 
@@ -48,6 +48,12 @@ def add_trace_parser(subparsers) -> None:
     doctor_parser.add_argument("--stall-seconds", type=float, default=60.0, help="Calls slower than this stall.")
     doctor_parser.add_argument(
         "--max-rows", type=int, default=200, help="Row cap assumed when judging oversized results."
+    )
+    doctor_parser.add_argument(
+        "--max-star-columns",
+        type=int,
+        default=DEFAULT_MAX_STAR_COLUMNS,
+        help="SELECT * width threshold assumed when judging oversized results (0 turns it off).",
     )
     doctor_parser.add_argument(
         "--export-replay",
@@ -184,7 +190,13 @@ def _trace_doctor(args: argparse.Namespace) -> int:
     if not any(call.kind == "query" for call in calls):
         print(f"No query tool calls found in {', '.join(paths)}.", file=sys.stderr)
         return 1
-    report = diagnose(calls, stall_seconds=args.stall_seconds, max_rows=args.max_rows, redact=not args.no_redact)
+    report = diagnose(
+        calls,
+        stall_seconds=args.stall_seconds,
+        max_rows=args.max_rows,
+        max_star_columns=args.max_star_columns or None,
+        redact=not args.no_redact,
+    )
 
     fmt = args.format or _infer_format(args.output) or "terminal"
     if fmt == "md":
@@ -270,6 +282,13 @@ def _add_hook_options(parser: argparse.ArgumentParser) -> None:
         "--require-schema",
         action="store_true",
         help="With --guard: deny queries on datasets whose schema the agent has not fetched yet.",
+    )
+    parser.add_argument(
+        "--max-star-columns",
+        type=int,
+        default=DEFAULT_MAX_STAR_COLUMNS,
+        help=(f"With --guard: deny SELECT * on cached datasets with more columns than this and ask for named "
+              f"columns (default {DEFAULT_MAX_STAR_COLUMNS}; 0 turns it off)."),
     )
     _add_tool_arg(parser)
 

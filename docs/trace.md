@@ -51,8 +51,9 @@ Two Foundry details matter. The MCP server appends a "403 Forbidden ... the data
 1. parses the SQL in the tool's dialect (Spark for Foundry); if sqlglot cannot parse it, the call is allowed, because the engine's parser is the authority;
 2. looks up every referenced dataset (RID or path) in the schema cache, which is filled from `get_foundry_dataset_schema` results and from successful `SELECT *` queries on a single dataset;
 3. when all of them are cached, runs `SQLValidator` against those schemas and denies unknown or ambiguous columns, with `repair_hints`' "did you mean" text, and denies arithmetic that treats a DATE/TIMESTAMP column as epoch milliseconds (`Report_Date / 1000`, `Report_Date >= 1767225600000`);
-4. with `--max-rows N`, denies queries that have neither `LIMIT <= N`, a tool row limit `<= N`, nor an aggregate-only projection;
-5. with `--require-schema`, denies queries on datasets the agent has not fetched a schema for, which turns a wrong RID into a cheap schema-call failure.
+4. denies `SELECT *` (or `t.*`) read straight from a cached dataset with more than `--max-star-columns` columns (default 20; `0` turns it off), and lists the dataset's columns so the agent names only the ones it needs. Width is known only for cached datasets, so others are not judged; a star over a narrowing subquery is fine;
+5. with `--max-rows N`, denies queries that have neither `LIMIT <= N`, a tool row limit `<= N`, nor an aggregate-only projection. When both size rules fail, one reply covers both, so the agent fixes the query in a single retry;
+6. with `--require-schema`, denies queries on datasets the agent has not fetched a schema for, which turns a wrong RID into a cheap schema-call failure.
 
 A dataset that is not cached is never judged. Datasets get rebuilt with new columns, so a cached schema can go stale. When the guard denies a query for its columns, the message tells the agent it may resend the identical query, and the hook allows that resend. If the query then succeeds, the PostToolUse hook drops the stale cache entry. The denial costs one turn, not the task.
 

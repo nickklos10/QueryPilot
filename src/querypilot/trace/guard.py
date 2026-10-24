@@ -5,7 +5,8 @@ the schema cache and returns "did you mean" feedback, so the agent fixes a bad
 column without a round trip to the warehouse. It only judges queries whose
 datasets are all cached; anything it cannot parse or resolve is allowed
 (fail open), because a guard that blocks valid SQL costs more than it saves.
-It can also require a row cap (a LIMIT, or the tool's own row-limit input).
+It can also require a row cap (a LIMIT, or the tool's own row-limit input) and
+named columns instead of ``SELECT *`` on cached datasets wider than a threshold.
 """
 from __future__ import annotations
 
@@ -38,7 +39,8 @@ _RESOLUTION_ERRORS = ("Unknown column:", "Ambiguous column:", "Unknown table qua
 class GuardDecision:
     action: str = ALLOW
     reason: str | None = None
-    # "schema" (unknown column/table), "limit" (no row cap), "schema_required".
+    # "schema" (unknown column/table), "star" (SELECT * on a wide dataset),
+    # "limit" (no row cap), "schema_required".
     rule: str | None = None
     # SQL with a LIMIT added, for callers that rewrite instead of denying.
     limited_sql: str | None = None
@@ -60,6 +62,7 @@ def guard_sql(
     tool_row_limit: int | None = None,
     require_schema: bool = False,
     schema_tool_hint: str = "the schema tool",
+    max_star_columns: int | None = None,
 ) -> GuardDecision:
     stripped = sql.strip().rstrip(";").strip()
     try:
@@ -108,16 +111,60 @@ def guard_sql(
             decision.reason = _message(problems)
             return decision
 
+    problems = _wide_star_problems(expression, datasets, max_star_columns) if max_star_columns else []
+    if problems:
+        decision.rule = "star"
     if max_rows is not None and not _row_capped(expression, max_rows, tool_row_limit):
         decision.limited_sql = _with_limit(stripped, expression, max_rows, dialect)
-        decision.action, decision.rule = DENY, "limit"
-        decision.reason = _message(
-            [
-                (f"Queries must return at most {max_rows} rows: add `LIMIT {max_rows}` "
-                "(or a smaller one), or aggregate. Large results overflow the context window.")
-            ]
+        decision.rule = decision.rule or "limit"
+        problems.append(
+            f"Queries must return at most {max_rows} rows: add `LIMIT {max_rows}` "
+            "(or a smaller one), or aggregate. Large results overflow the context window."
         )
+    if problems:
+        # One reply for both rules, so the agent fixes the query in a single retry.
+        decision.action = DENY
+        decision.reason = _message(problems)
     return decision
+
+
+_STAR_COLUMN_EXAMPLES = 12
+
+
+def _wide_star_problems(
+    expression: exp.Expression, datasets: dict[str, CachedDataset | None], max_columns: int
+) -> list[str]:
+    """``SELECT *`` (or ``t.*``) read straight from a cached dataset wider than ``max_columns``."""
+    problems: list[str] = []
+    for select in expression.find_all(exp.Select):
+        sources = {
+            (table.alias_or_name or "").lower(): table
+            for table in select.find_all(exp.Table)
+            if table.find_ancestor(exp.Select) is select
+        }
+        for projection in select.expressions:
+            if isinstance(projection, exp.Star):
+                tables = list(sources.values())
+            elif isinstance(projection, exp.Column) and isinstance(projection.this, exp.Star):
+                table = sources.get(projection.table.lower())
+                tables = [table] if table is not None else []
+            else:
+                continue
+            for table in tables:
+                name = table_ref_name(table)
+                dataset = datasets.get(name)
+                if dataset is None or len(dataset.columns) <= max_columns:
+                    continue
+                shown = ", ".join(f"`{c.name}`" for c in dataset.columns[:_STAR_COLUMN_EXAMPLES])
+                more = len(dataset.columns) - _STAR_COLUMN_EXAMPLES
+                message = (
+                    f"`SELECT *` on `{dataset.display_name}` returns all {len(dataset.columns)} columns, "
+                    f"which overflows the context window. Name only the columns you need; it has "
+                    f"{shown}" + (f" and {more} more" if more > 0 else "") + "."
+                )
+                if message not in problems:
+                    problems.append(message)
+    return problems
 
 
 def _column_problems(
