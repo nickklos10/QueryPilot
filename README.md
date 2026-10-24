@@ -145,7 +145,7 @@ querypilot trace doctor --output report.md     # redacted, shareable
 querypilot hooks install --guard --max-rows 200
 ```
 
-With `--guard`, a PreToolUse hook validates each query against schemas cached from the agent's own schema calls. It denies unknown columns with a "did you mean" reply before the query reaches the warehouse, blocks date arithmetic on DATE columns stored as epoch milliseconds, and enforces a row cap. Foundry's tool is mapped by default; map any other with `--tool NAME=SQL_FIELD[:DIALECT]`. Recovered retry chains export to `eval replay` as a regression suite. See [docs/trace.md](docs/trace.md) and the [first Foundry report](docs/trace-doctor-foundry-2026-10-21.md).
+With `--guard`, a PreToolUse hook validates each query against schemas cached from the agent's own schema calls. It denies unknown columns with a "did you mean" reply before the query reaches the warehouse, blocks date arithmetic on DATE columns stored as epoch milliseconds, enforces a row cap, and asks for named columns instead of `SELECT *` on wide datasets. Foundry's tool is mapped by default; map any other with `--tool NAME=SQL_FIELD[:DIALECT]`. Recovered retry chains export to `eval replay` as a regression suite. See [docs/trace.md](docs/trace.md) and the [first Foundry report](docs/trace-doctor-foundry-2026-10-21.md).
 
 ## Better SQL from the model
 

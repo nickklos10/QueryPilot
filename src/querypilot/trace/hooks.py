@@ -60,6 +60,9 @@ def settings_path(scope: str, project_dir: str | Path | None = None) -> Path:
     return base / ".claude" / ("settings.json" if scope == "project" else "settings.local.json")
 
 
+DEFAULT_MAX_STAR_COLUMNS = 20
+
+
 @dataclass
 class HookOptions:
     audit_log: Path = field(default_factory=default_audit_log)
@@ -67,6 +70,8 @@ class HookOptions:
     guard: bool = False
     max_rows: int | None = None
     require_schema: bool = False
+    # With guard: deny SELECT * on cached datasets wider than this; 0 turns it off.
+    max_star_columns: int = DEFAULT_MAX_STAR_COLUMNS
     tools: list[str] = field(default_factory=list)
 
     @property
@@ -83,6 +88,8 @@ class HookOptions:
             args += ["--max-rows", str(self.max_rows)]
         if self.require_schema:
             args.append("--require-schema")
+        if self.max_star_columns != DEFAULT_MAX_STAR_COLUMNS:
+            args += ["--max-star-columns", str(self.max_star_columns)]
         for tool in self.tools:
             args += ["--tool", tool]
         return args
@@ -249,6 +256,7 @@ def _pre(payload: dict, tool_input: dict, spec, options: HookOptions, state: _St
         max_rows=options.max_rows,
         tool_row_limit=int(row_limit) if isinstance(row_limit, int | float | str) and str(row_limit).isdigit() else None,
         require_schema=options.require_schema,
+        max_star_columns=options.max_star_columns or None,
         schema_tool_hint="the dataset schema tool",
     )
     if not decision.denied:
@@ -413,5 +421,6 @@ def options_from_args(args) -> HookOptions:
         guard=bool(getattr(args, "guard", False)),
         max_rows=getattr(args, "max_rows", None),
         require_schema=bool(getattr(args, "require_schema", False)),
+        max_star_columns=getattr(args, "max_star_columns", DEFAULT_MAX_STAR_COLUMNS),
         tools=list(args.tool or []),
     )
