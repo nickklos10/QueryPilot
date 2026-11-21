@@ -33,7 +33,7 @@ from querypilot.trace.tools import (
     ToolRegistry,
     parse_tool_spec,
 )
-from querypilot.trace.transcript import QUERY, SCHEMA, load_calls, result_text
+from querypilot.trace.transcript import QUERY, SCHEMA, ToolCall, load_calls, result_text
 
 FIXTURE = Path(__file__).parent / "fixtures" / "claude_code_foundry_transcript.jsonl"
 RID = "ri.foundry.main.dataset.11111111-2222-3333-4444-555555555555"
@@ -243,6 +243,106 @@ def test_guard_row_cap() -> None:
     assert not guard_sql(f"SELECT * FROM `{RID}` LIMIT 50", cache, max_rows=200).denied
     assert not guard_sql(f"SELECT * FROM `{RID}`", cache, max_rows=200, tool_row_limit=100).denied
     assert not guard_sql(f"SELECT COUNT(*), MAX(MAU) FROM `{RID}`", cache, max_rows=200).denied
+
+
+WIDE_RID = "ri.foundry.main.dataset.99999999-8888-7777-6666-555555555555"
+
+
+def _wide_cache(columns: int = 30) -> SchemaCache:
+    cache = _usage_cache()
+    cache.datasets[WIDE_RID] = CachedDataset(
+        key=WIDE_RID,
+        path="/Demo/Raw/wide_export",
+        columns=[CachedColumn(f"Col_{i:02d}", "STRING") for i in range(columns)],
+    )
+    return cache
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        f"SELECT * FROM `{WIDE_RID}` LIMIT 50",
+        f"SELECT w.* FROM `{WIDE_RID}` AS w LIMIT 50",
+        f"SELECT u.MAU, w.* FROM `{RID}` AS u JOIN `{WIDE_RID}` AS w ON u.Customer_Name = w.Col_00 LIMIT 50",
+    ],
+)
+def test_guard_denies_select_star_on_wide_cached_dataset(sql) -> None:
+    decision = guard_sql(sql, _wide_cache(), max_star_columns=20)
+
+    assert decision.denied and decision.rule == "star"
+    assert "returns all 30 columns" in decision.reason
+    assert "`Col_00`" in decision.reason and "and 18 more" in decision.reason
+
+
+def test_guard_allows_select_star_when_narrow_unknown_or_aggregated() -> None:
+    cache = _wide_cache()
+
+    # The usage dataset has 4 columns, under the threshold.
+    assert not guard_sql(f"SELECT * FROM `{RID}` LIMIT 50", cache, max_star_columns=20).denied
+    # Width is unknown for uncached datasets, so they are not judged.
+    other = "ri.foundry.main.dataset.12345678-1234-1234-1234-123456789012"
+    assert not guard_sql(f"SELECT * FROM `{other}` LIMIT 50", cache, max_star_columns=20).denied
+    # COUNT(*) and named columns are fine; a star over a narrowing subquery reads only its columns.
+    assert not guard_sql(f"SELECT COUNT(*) FROM `{WIDE_RID}`", cache, max_star_columns=20).denied
+    assert not guard_sql(f"SELECT Col_01, Col_02 FROM `{WIDE_RID}` LIMIT 50", cache, max_star_columns=20).denied
+    narrowed = f"SELECT * FROM (SELECT Col_01 FROM `{WIDE_RID}`) AS t LIMIT 50"
+    assert not guard_sql(narrowed, cache, max_star_columns=20).denied
+    # Off unless a threshold is given.
+    assert not guard_sql(f"SELECT * FROM `{WIDE_RID}` LIMIT 50", cache).denied
+
+
+def test_guard_reports_star_and_row_cap_in_one_reply() -> None:
+    decision = guard_sql(f"SELECT * FROM `{WIDE_RID}`", _wide_cache(), max_rows=200, max_star_columns=20)
+
+    assert decision.rule == "star"
+    assert "returns all 30 columns" in decision.reason
+    assert "at most 200 rows" in decision.reason
+
+
+def test_doctor_replay_counts_row_cap_and_star_catches() -> None:
+    wide = _wide_cache().lookup(WIDE_RID)
+    too_large = "Error: result (2,290,218 characters across 2,275 lines) exceeds maximum allowed tokens."
+    calls = [
+        ToolCall("c1", FOUNDRY_SCHEMA_TOOL, SCHEMA, status=classify.OK, dataset=wide),
+        # Reads every column of the cached wide dataset.
+        ToolCall("c2", FOUNDRY_SQL_TOOL, QUERY, sql=f"SELECT * FROM `{WIDE_RID}`", params={"rowLimit": 100}),
+        # Named columns, but no cap at or below 200 rows.
+        ToolCall("c3", FOUNDRY_SQL_TOOL, QUERY, sql=f"SELECT Col_01 FROM `{WIDE_RID}`", params={"rowLimit": 1000}),
+        # Succeeded without a cap: the row-cap rule would have sent it back once.
+        ToolCall("c4", FOUNDRY_SQL_TOOL, QUERY, sql=f"SELECT Col_02 FROM `{WIDE_RID}`", params={"rowLimit": 1000}),
+    ]
+    for call in calls[1:3]:
+        call.apply_result(too_large, is_error=True, ended_at=None)
+    calls[3].apply_result("|Col_02|\n|---|\n|a|\n", is_error=False, ended_at=None)
+
+    guard = diagnose(calls, max_rows=200, max_star_columns=20).guard
+
+    assert guard.size_caught == 2
+    assert guard.wide_star_in_too_large == 1
+    assert guard.limit_missing_in_too_large == 1
+    assert guard.size_blocks_of_successes == 1
+
+
+def test_guard_hook_star_rule_defaults_on_and_can_be_disabled(tmp_path) -> None:
+    payload = {
+        "session_id": "s1",
+        "tool_name": FOUNDRY_SQL_TOOL,
+        "tool_use_id": "t1",
+        "tool_input": {"sqlQuery": f"SELECT * FROM `{WIDE_RID}` LIMIT 20", "rowLimit": 20},
+    }
+    options = HookOptions(audit_log=tmp_path / "audit.jsonl", cache_path=tmp_path / "cache.json", guard=True)
+    _wide_cache().save(options.cache_path)
+
+    denied = run_hook("pre", payload, options)["hookSpecificOutput"]
+    assert denied["permissionDecision"] == "deny"
+    assert "Name only the columns you need" in denied["permissionDecisionReason"]
+    # A resend is denied again: the star rule is policy, not a possibly stale schema.
+    assert run_hook("pre", {**payload, "tool_use_id": "t2"}, options) is not None
+
+    off = HookOptions(audit_log=options.audit_log, cache_path=options.cache_path, guard=True, max_star_columns=0)
+    assert run_hook("pre", {**payload, "tool_use_id": "t3"}, off) is None
+    assert "--max-star-columns" in " ".join(off.cli_args())
+    assert "--max-star-columns" not in " ".join(options.cli_args())
 
 
 def test_guard_ignores_struct_fields_and_dotted_names() -> None:

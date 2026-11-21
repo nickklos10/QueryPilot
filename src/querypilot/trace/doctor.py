@@ -130,6 +130,11 @@ class GuardReplay:
     cached_datasets: int = 0
     limit_missing_in_too_large: int = 0
     select_star_in_too_large: int = 0
+    # Oversized results the row cap or the wide SELECT * rule would have stopped.
+    size_caught: int = 0
+    wide_star_in_too_large: int = 0
+    # Successful queries those two rules would have sent back for a LIMIT or named columns.
+    size_blocks_of_successes: int = 0
     too_large_row_limits: dict[str, int] = field(default_factory=dict)
 
 
@@ -257,13 +262,14 @@ def diagnose(
     *,
     stall_seconds: float = 60.0,
     max_rows: int = 200,
+    max_star_columns: int | None = 20,
     redact: bool = True,
 ) -> DoctorReport:
     queries = [c for c in calls if c.kind == QUERY]
     ran = [c for c in queries if c.ran and c.status != NO_RESULT]
     failed = [c for c in ran if c.status == ERROR]
     cache = SchemaCache()
-    guard = _replay_guard(calls, cache, max_rows=max_rows)
+    guard = _replay_guard(calls, cache, max_rows=max_rows, max_star_columns=max_star_columns)
     redactor = Redactor(redact, cache)
     guard.caught_examples = [redactor.guard_text(e) for e in guard.caught_examples]
     guard.false_block_examples = [redactor.guard_text(e) for e in guard.false_block_examples]
@@ -428,7 +434,9 @@ def _percentile(values: list[float], pct: float) -> float:
     return values[low] + (values[high] - values[low]) * (rank - low)
 
 
-def _replay_guard(calls: list[ToolCall], cache: SchemaCache, *, max_rows: int) -> GuardReplay:
+def _replay_guard(
+    calls: list[ToolCall], cache: SchemaCache, *, max_rows: int, max_star_columns: int | None = None
+) -> GuardReplay:
     replay = GuardReplay()
     caught: Counter = Counter()
     row_limits: Counter = Counter()
@@ -440,6 +448,16 @@ def _replay_guard(calls: list[ToolCall], cache: SchemaCache, *, max_rows: int) -
         if not call.sql or not call.ran or call.status == NO_RESULT:
             continue
         decision = guard_sql(call.sql, cache, dialect=call.dialect)
+        # The size rules judged against the cache as it stood before this call.
+        sized = guard_sql(
+            call.sql,
+            cache,
+            dialect=call.dialect,
+            max_rows=max_rows,
+            tool_row_limit=_int(call.params.get("rowLimit")),
+            max_star_columns=max_star_columns,
+        )
+        size_denied = not decision.denied and sized.rule in ("star", "limit")
         if decision.checked_columns:
             replay.checked += 1
         if call.status == OK:
@@ -450,6 +468,7 @@ def _replay_guard(calls: list[ToolCall], cache: SchemaCache, *, max_rows: int) -
                 if len(replay.false_block_examples) < 8:
                     replay.false_block_examples.append(_first_line(decision.reason))
                 cache.evict(decision.tables)
+            replay.size_blocks_of_successes += size_denied
             if call.header:
                 cache.learn_from_select_star(call.sql, call.header, call.dialect)
         elif decision.denied:
@@ -460,6 +479,8 @@ def _replay_guard(calls: list[ToolCall], cache: SchemaCache, *, max_rows: int) -
             limited = guard_sql(call.sql, SchemaCache(), dialect=call.dialect, max_rows=max_rows,
                                 tool_row_limit=_int(call.params.get("rowLimit")))
             replay.limit_missing_in_too_large += limited.rule == "limit"
+            replay.wide_star_in_too_large += sized.rule == "star"
+            replay.size_caught += size_denied
             replay.select_star_in_too_large += bool(re.search(r"select\s+(?:\w+\.)?\*", call.sql, re.IGNORECASE))
             row_limits[_bucket(_int(call.params.get("rowLimit")))] += 1
     replay.caught = dict(caught.most_common())
@@ -889,6 +910,10 @@ def render_markdown(report: DoctorReport, *, title: str = "QueryPilot trace doct
         + (", ".join(f"{CLASS_LABELS.get(k, k)} {v}" for k, v in g.caught.items()) or "none")
         + ". Outside the column and type classes, these queries failed for another reason first but "
         "also used a column the dataset lacks or did date arithmetic on a DATE column.",
+        (f"- Oversized results the row cap or the wide `SELECT *` rule would have stopped: {g.size_caught} "
+        f"({g.limit_missing_in_too_large} lacked a row cap, {g.wide_star_in_too_large} read every column of a "
+        f"cached wide dataset). These rules would also have sent {g.size_blocks_of_successes} successful "
+        "queries back once for a LIMIT or named columns."),
         (f"- Successful queries it would have blocked by mistake: {g.false_blocks} of {g.successes_checked:,} "
         "checked. These are mostly datasets rebuilt with new columns after their schema was cached; "
         "live, the agent resends the query once and the hook drops the stale entry."),
@@ -930,8 +955,10 @@ def render_terminal(report: DoctorReport) -> str:
         "",
         (f"retry chains: {c.chains} ({c.recovered} recovered, {c.abandoned} abandoned), "
         f"{c.failed_attempts} failed attempts, {c.wasted_seconds / 60:.0f} min"),
-        (f"guard replay: would stop {sum(r.guard.caught.values())} failures, "
-        f"{r.guard.false_blocks} false blocks of {r.guard.successes_checked:,} checked successes"),
+        (f"guard replay: would stop {sum(r.guard.caught.values()) + r.guard.size_caught} failures "
+        f"({sum(r.guard.caught.values())} by schema, {r.guard.size_caught} by row cap or SELECT *), "
+        f"{r.guard.false_blocks} false schema blocks of {r.guard.successes_checked:,} checked successes, "
+        f"{r.guard.size_blocks_of_successes} successes sent back for a LIMIT or named columns"),
         "",
         "findings:",
     ]
